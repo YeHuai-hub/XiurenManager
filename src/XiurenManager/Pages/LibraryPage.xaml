@@ -1,0 +1,297 @@
+<Page x:Class="XiurenManager.Pages.LibraryPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+      xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      mc:Ignorable="d"
+      Background="Transparent"
+      PreviewMouseWheel="LibraryPage_OnPreviewMouseWheel">
+    <Grid x:Name="LibraryLayout" Margin="26,20,26,24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="74" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Text="媒体库" Style="{StaticResource PageTitleStyle}" />
+                <TextBlock x:Name="LibrarySummary"
+                           Margin="1,6,0,0"
+                           Style="{StaticResource SecondaryTextStyle}" />
+            </StackPanel>
+            <StackPanel Grid.Column="1"
+                        Orientation="Horizontal"
+                        VerticalAlignment="Top">
+                <StackPanel x:Name="FileOperationIndicator"
+                            Width="150"
+                            Margin="0,0,12,0"
+                            Orientation="Horizontal"
+                            Visibility="Collapsed"
+                            VerticalAlignment="Center">
+                    <ProgressBar Width="34"
+                                 Height="4"
+                                 Margin="0,0,8,0"
+                                 IsIndeterminate="True"
+                                 VerticalAlignment="Center" />
+                    <TextBlock x:Name="FileOperationText"
+                               Width="106"
+                               Foreground="{StaticResource SecondaryTextBrush}"
+                               FontSize="11"
+                               TextTrimming="CharacterEllipsis"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+                <ui:TextBox x:Name="SetFilter"
+                            Width="260"
+                            PlaceholderText="标题 / 编号 / 模特 / 标签"
+                            TextChanged="SetFilter_OnTextChanged" />
+                <TextBlock x:Name="FilterResultText"
+                           Width="58"
+                           Margin="8,0,0,0"
+                           Foreground="{StaticResource SecondaryTextBrush}"
+                           FontSize="11"
+                           TextAlignment="Center"
+                           VerticalAlignment="Center" />
+                <ToggleButton x:Name="FavoriteOnly"
+                              Margin="10,0,0,0"
+                              Padding="12,0"
+                              Content="只看喜欢"
+                              Checked="FavoriteOnly_OnChanged"
+                              Unchecked="FavoriteOnly_OnChanged" />
+                <ui:Button Margin="10,0,0,0"
+                           Content="重新扫描"
+                           Icon="{ui:SymbolIcon ArrowSync24}"
+                           Click="Rescan_OnClick" />
+            </StackPanel>
+        </Grid>
+
+        <Grid x:Name="LibraryBody" Grid.Row="1" ClipToBounds="True">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="218" />
+                <ColumnDefinition Width="1" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="40" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <TextBlock Text="模特"
+                           Style="{StaticResource SectionTitleStyle}"
+                           VerticalAlignment="Center" />
+                <ListBox x:Name="ModelList"
+                         Grid.Row="1"
+                         Margin="-8,4,10,0"
+                         BorderThickness="0"
+                         Background="Transparent"
+                         SelectionChanged="ModelList_OnSelectionChanged"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         VirtualizingPanel.IsVirtualizing="True"
+                         VirtualizingPanel.VirtualizationMode="Recycling">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Width="184" Margin="4,5">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Name}"
+                                               Foreground="{StaticResource PrimaryTextBrush}"
+                                               FontWeight="SemiBold"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding Detail}"
+                                               Margin="0,3,0,0"
+                                               Style="{StaticResource SecondaryTextStyle}" />
+                                </StackPanel>
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding Score}"
+                                           Margin="8,0,0,0"
+                                           Foreground="{StaticResource FavoriteCoralBrush}"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
+
+            <Border Grid.Column="1" Background="{StaticResource StrokeBrush}" />
+
+            <ListBox x:Name="SetCards"
+                     Grid.Column="2"
+                     Margin="20,0,0,0"
+                     BorderThickness="0"
+                     Background="Transparent"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                     ScrollViewer.CanContentScroll="True"
+                     VirtualizingPanel.IsVirtualizing="True"
+                     VirtualizingPanel.VirtualizationMode="Recycling"
+                     SizeChanged="SetCards_OnSizeChanged">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Focusable" Value="False" />
+                        <Setter Property="Padding" Value="0" />
+                        <Setter Property="Margin" Value="0" />
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <ContentPresenter />
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <VirtualizingStackPanel />
+                    </ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <ItemsControl ItemsSource="{Binding Items}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Width="220"
+                                          Height="272"
+                                          Margin="0,0,14,14">
+                                        <Button Style="{StaticResource MediaCardButtonStyle}"
+                                                Tag="{Binding Item}"
+                                                Loaded="SetCard_OnLoaded"
+                                                Click="SetCard_OnClick">
+                                            <Grid>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="178" />
+                                                    <RowDefinition Height="*" />
+                                                </Grid.RowDefinitions>
+                                                <Border CornerRadius="5,5,0,0"
+                                                        ClipToBounds="True"
+                                                        Background="{StaticResource MediaCanvasBrush}">
+                                                    <Grid>
+                                                        <Image Source="{Binding Cover}"
+                                                               Stretch="UniformToFill" />
+                                                        <TextBlock Text="{Binding Placeholder}"
+                                                                   Foreground="{StaticResource SecondaryTextBrush}"
+                                                                   HorizontalAlignment="Center"
+                                                                   VerticalAlignment="Center" />
+                                                        <Border HorizontalAlignment="Right"
+                                                                VerticalAlignment="Top"
+                                                                Margin="8"
+                                                                Padding="7,3"
+                                                                CornerRadius="4"
+                                                                Background="#B30E1114">
+                                                            <TextBlock Text="{Binding MediaLabel}"
+                                                                       Foreground="White"
+                                                                       FontSize="11" />
+                                                        </Border>
+                                                        <Border HorizontalAlignment="Left"
+                                                                VerticalAlignment="Bottom"
+                                                                Margin="8"
+                                                                Padding="7,3"
+                                                                CornerRadius="4"
+                                                                Background="#C90E1114">
+                                                            <Border.Style>
+                                                                <Style TargetType="Border">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding TagsLabel}" Value="">
+                                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Border.Style>
+                                                            <TextBlock Text="{Binding TagsLabel}"
+                                                                       MaxWidth="166"
+                                                                       Foreground="White"
+                                                                       FontSize="11"
+                                                                       TextTrimming="CharacterEllipsis" />
+                                                        </Border>
+                                                    </Grid>
+                                                </Border>
+                                                <Grid Grid.Row="1" Margin="11,9,11,10">
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="*" />
+                                                        <RowDefinition Height="24" />
+                                                    </Grid.RowDefinitions>
+                                                    <TextBlock Text="{Binding Title}"
+                                                               Foreground="{StaticResource PrimaryTextBrush}"
+                                                               FontSize="13"
+                                                               FontWeight="SemiBold"
+                                                               TextWrapping="Wrap"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               MaxHeight="42" />
+                                                    <Grid Grid.Row="1">
+                                                        <TextBlock Text="{Binding SizeLabel}"
+                                                                   Style="{StaticResource SecondaryTextStyle}"
+                                                                   VerticalAlignment="Bottom" />
+                                                        <StackPanel Orientation="Horizontal"
+                                                                    HorizontalAlignment="Right"
+                                                                    VerticalAlignment="Bottom">
+                                                            <ui:SymbolIcon Symbol="Heart24"
+                                                                           FontSize="14"
+                                                                           Foreground="{StaticResource FavoriteCoralBrush}" />
+                                                            <TextBlock Text="{Binding Score}"
+                                                                       Margin="4,0,0,0"
+                                                                       Foreground="{StaticResource FavoriteCoralBrush}"
+                                                                       FontWeight="SemiBold" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Grid>
+                                            </Grid>
+                                        </Button>
+                                        <ui:Button Width="32"
+                                                   Height="32"
+                                                   AutomationProperties.Name="管理本套文件"
+                                                   Margin="8"
+                                                   Padding="0"
+                                                   HorizontalAlignment="Left"
+                                                   VerticalAlignment="Top"
+                                                   Panel.ZIndex="5"
+                                                   Tag="{Binding Item}"
+                                                   ToolTip="管理本套文件"
+                                                   Icon="{ui:SymbolIcon MoreVertical24}"
+                                                   Click="ManageSet_OnClick">
+                                            <ui:Button.ContextMenu>
+                                                <ContextMenu DataContext="{Binding PlacementTarget.Tag, RelativeSource={RelativeSource Self}}">
+                                                    <MenuItem Header="打开所在目录" Click="OpenSetFolder_OnClick" />
+                                                    <Separator />
+                                                    <MenuItem Header="重命名" Click="RenameSet_OnClick" />
+                                                    <MenuItem Header="移动到…" Click="MoveSet_OnClick" />
+                                                    <MenuItem Header="复制到…" Click="CopySet_OnClick" />
+                                                    <Separator />
+                                                    <MenuItem Header="删除到回收站" Click="DeleteSet_OnClick" />
+                                                </ContextMenu>
+                                            </ui:Button.ContextMenu>
+                                        </ui:Button>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <TextBlock x:Name="EmptyLibrary"
+                       Grid.Column="2"
+                       Text="没有符合条件的套图"
+                       Foreground="{StaticResource SecondaryTextBrush}"
+                       FontSize="15"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       Visibility="Collapsed" />
+        </Grid>
+    </Grid>
+</Page>

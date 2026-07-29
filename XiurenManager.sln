@@ -1,0 +1,34 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{A1C274F7-A481-419F-B610-A43DF8D2AD59}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XiurenDownloader", "src\XiurenDownloader\XiurenDownloader.csproj", "{7AC9ADCD-66AC-49F1-9F97-060D5911BA44}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XiurenManager", "src\XiurenManager\XiurenManager.csproj", "{B33F4A9A-7E24-47ED-A453-A6A85FF71168}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{7AC9ADCD-66AC-49F1-9F97-060D5911BA44}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7AC9ADCD-66AC-49F1-9F97-060D5911BA44}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7AC9ADCD-66AC-49F1-9F97-060D5911BA44}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7AC9ADCD-66AC-49F1-9F97-060D5911BA44}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B33F4A9A-7E24-47ED-A453-A6A85FF71168}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B33F4A9A-7E24-47ED-A453-A6A85FF71168}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B33F4A9A-7E24-47ED-A453-A6A85FF71168}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B33F4A9A-7E24-47ED-A453-A6A85FF71168}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{7AC9ADCD-66AC-49F1-9F97-060D5911BA44} = {A1C274F7-A481-419F-B610-A43DF8D2AD59}
+		{B33F4A9A-7E24-47ED-A453-A6A85FF71168} = {A1C274F7-A481-419F-B610-A43DF8D2AD59}
+	EndGlobalSection
+EndGlobal

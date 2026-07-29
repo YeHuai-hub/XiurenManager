@@ -1,0 +1,89 @@
+using System.Collections.ObjectModel;
+using System.Text;
+using System.Threading.Channels;
+using System.Windows.Threading;
+using XiurenDownloader;
+
+namespace XiurenManager;
+
+internal sealed class AppState
+{
+    public Settings Settings { get; } = Settings.Load();
+    public Database Database { get; } = Database.Load();
+    public FavoriteStore Favorites { get; } = FavoriteStore.Load();
+    public ObservableCollection<string> SessionLog { get; } = [];
+    public QueueService Queue { get; }
+    private readonly Channel<string> persistentLog = Channel.CreateUnbounded<string>(
+        new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
+
+    public event EventHandler? DataChanged;
+    public event EventHandler? JobsChanged;
+    public event EventHandler<string>? LogAdded;
+
+    public AppState()
+    {
+        Queue = new QueueService(this);
+        _ = Task.Run(PersistLogsAsync);
+    }
+
+    public void NotifyDataChanged()
+    {
+        RaiseOnUi(() => DataChanged?.Invoke(this, EventArgs.Empty));
+    }
+
+    public void NotifyJobsChanged()
+    {
+        RaiseOnUi(() => JobsChanged?.Invoke(this, EventArgs.Empty));
+    }
+
+    private static void RaiseOnUi(Action callback)
+    {
+        var dispatcher = App.Current?.Dispatcher;
+        if (dispatcher == null || dispatcher.HasShutdownStarted) return;
+        if (dispatcher.CheckAccess())
+            callback();
+        else
+            dispatcher.BeginInvoke(callback, DispatcherPriority.Background);
+    }
+
+    public void WriteLog(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return;
+        var value = $"[{DateTime.Now:HH:mm:ss}] {message.Trim()}";
+        persistentLog.Writer.TryWrite(value);
+        var dispatcher = App.Current?.Dispatcher;
+        if (dispatcher == null || dispatcher.HasShutdownStarted) return;
+
+        void AddToSession()
+        {
+            SessionLog.Add(value);
+            while (SessionLog.Count > 2000)
+                SessionLog.RemoveAt(0);
+            LogAdded?.Invoke(this, value);
+        }
+
+        if (dispatcher.CheckAccess())
+            AddToSession();
+        else
+            dispatcher.BeginInvoke(AddToSession, DispatcherPriority.Background);
+    }
+
+    private async Task PersistLogsAsync()
+    {
+        try
+        {
+            Directory.CreateDirectory(AppPaths.LogDir);
+            await foreach (var value in persistentLog.Reader.ReadAllAsync())
+            {
+                var path = Path.Combine(
+                    AppPaths.LogDir,
+                    DateTime.Now.ToString("yyyyMMdd") + "-wpf.log");
+                await File.AppendAllTextAsync(
+                    path,
+                    value + Environment.NewLine,
+                    Encoding.UTF8);
+            }
+        }
+        catch { }
+    }
+}

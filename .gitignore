@@ -1,0 +1,43 @@
+# Private runtime data
+/config/
+/data/
+/logs/
+
+# Local downloads and temporary transfer state
+/*.json
+/*.csv
+/*.xlsx
+/*.log
+/*.db
+/*.sqlite*
+/*.BaiduPCS-Go-downloading
+
+# Build and release outputs
+/artifacts/
+/publish/
+/publish-*/
+/*.zip
+/*.sha256
+/src/**/bin/
+/src/**/obj/
+
+# Third-party portable binaries
+/tools/
+
+# IDE and operating-system files
+/.vs/
+/.vscode/
+/.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.DS_Store
+Thumbs.db
+
+# Local secrets and environment overrides
+.env
+.env.*
+!.env.example
+*.local.json
+*.secrets.json

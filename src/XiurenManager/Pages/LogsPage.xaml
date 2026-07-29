@@ -1,0 +1,47 @@
+<Page x:Class="XiurenManager.Pages.LogsPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      Background="Transparent">
+    <Grid Margin="26,20,26,24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="74" />
+            <RowDefinition Height="48" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <StackPanel>
+            <TextBlock Text="日志" Style="{StaticResource PageTitleStyle}" />
+            <TextBlock Text="下载、解压、队列和媒体校验的实时输出。"
+                       Margin="1,6,0,0"
+                       Style="{StaticResource SecondaryTextStyle}" />
+        </StackPanel>
+        <WrapPanel Grid.Row="1">
+            <ui:Button Content="打开日志目录"
+                       Icon="{ui:SymbolIcon FolderOpen24}"
+                       Click="OpenFolder_OnClick" />
+            <ui:Button Margin="9,0,0,0"
+                       Content="清空当前显示"
+                       Icon="{ui:SymbolIcon Delete24}"
+                       Click="Clear_OnClick" />
+        </WrapPanel>
+        <ListBox x:Name="LogList"
+                 Grid.Row="2"
+                 Padding="12,8"
+                 Background="{StaticResource MediaCanvasBrush}"
+                 BorderBrush="{StaticResource StrokeBrush}"
+                 Foreground="{StaticResource PrimaryTextBrush}"
+                 FontFamily="Consolas"
+                 FontSize="12"
+                 VirtualizingPanel.IsVirtualizing="True"
+                 VirtualizingPanel.VirtualizationMode="Recycling">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <TextBlock Text="{Binding}"
+                               Margin="0,2"
+                               TextWrapping="Wrap"
+                               Foreground="{StaticResource PrimaryTextBrush}" />
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </Grid>
+</Page>
