@@ -23,6 +23,11 @@
                        Content="清空当前显示"
                        Icon="{ui:SymbolIcon Delete24}"
                        Click="Clear_OnClick" />
+            <ui:Button x:Name="ClearDiskButton"
+                       Margin="9,0,0,0"
+                       Content="清理磁盘日志"
+                       Icon="{ui:SymbolIcon Broom24}"
+                       Click="ClearDisk_OnClick" />
         </WrapPanel>
         <ListBox x:Name="LogList"
                  Grid.Row="2"

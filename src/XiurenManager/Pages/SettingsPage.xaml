@@ -68,6 +68,7 @@
                     <RowDefinition Height="54" />
                     <RowDefinition Height="54" />
                     <RowDefinition Height="54" />
+                    <RowDefinition Height="54" />
                     <RowDefinition Height="88" />
                     <RowDefinition Height="64" />
                 </Grid.RowDefinitions>
@@ -91,7 +92,12 @@
                 <TextBlock Grid.Row="5" Grid.Column="3" Text="持续秒数" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
                 <ui:TextBox x:Name="LowSpeedSeconds" Grid.Row="5" Grid.Column="4" Width="120" HorizontalAlignment="Left" />
 
-                <WrapPanel Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="4" VerticalAlignment="Center">
+                <TextBlock Grid.Row="6" Text="日志保留天数" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
+                <ui:TextBox x:Name="LogRetentionDays" Grid.Row="6" Grid.Column="1" Width="120" HorizontalAlignment="Left" />
+                <TextBlock Grid.Row="6" Grid.Column="3" Text="日志总上限 MB" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
+                <ui:TextBox x:Name="LogMaxTotalMB" Grid.Row="6" Grid.Column="4" Width="120" HorizontalAlignment="Left" />
+
+                <WrapPanel Grid.Row="7" Grid.Column="1" Grid.ColumnSpan="4" VerticalAlignment="Center">
                     <CheckBox x:Name="DeleteArchive" Content="解压成功后删除压缩包" Foreground="{StaticResource PrimaryTextBrush}" />
                     <CheckBox x:Name="SkipCompleted" Margin="24,0,0,0" Content="跳过本地完整资源" Foreground="{StaticResource PrimaryTextBrush}" />
                     <CheckBox x:Name="KeepSidecars" Margin="24,0,0,0" Content="保留附带文件" Foreground="{StaticResource PrimaryTextBrush}" />
@@ -99,7 +105,7 @@
                     <CheckBox x:Name="LowSpeedGuard" Margin="24,0,0,0" Content="启用低速重试" Foreground="{StaticResource PrimaryTextBrush}" />
                 </WrapPanel>
 
-                <ui:Button Grid.Row="7"
+                <ui:Button Grid.Row="8"
                            Grid.Column="1"
                            Margin="0,14,0,0"
                            VerticalAlignment="Top"

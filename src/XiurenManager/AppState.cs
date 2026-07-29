@@ -73,15 +73,24 @@ internal sealed class AppState
         try
         {
             Directory.CreateDirectory(AppPaths.LogDir);
+            var nextCleanup = DateTime.UtcNow.AddHours(1);
             await foreach (var value in persistentLog.Reader.ReadAllAsync())
             {
-                var path = Path.Combine(
-                    AppPaths.LogDir,
-                    DateTime.Now.ToString("yyyyMMdd") + "-wpf.log");
-                await File.AppendAllTextAsync(
-                    path,
-                    value + Environment.NewLine,
-                    Encoding.UTF8);
+                try
+                {
+                    var path = LogMaintenance.CurrentLogPath("-wpf", Settings.LogMaxFileMB);
+                    await File.AppendAllTextAsync(
+                        path,
+                        value + Environment.NewLine,
+                        Encoding.UTF8);
+
+                    if (DateTime.UtcNow >= nextCleanup)
+                    {
+                        LogMaintenance.Cleanup(Settings);
+                        nextCleanup = DateTime.UtcNow.AddHours(1);
+                    }
+                }
+                catch { }
             }
         }
         catch { }

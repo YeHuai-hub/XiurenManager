@@ -66,6 +66,8 @@ public partial class SettingsPage : Page
         SingleParallelism.Text = settings.SingleFileParallelism.ToString();
         LowSpeedThreshold.Text = settings.LowSpeedThresholdKBps.ToString();
         LowSpeedSeconds.Text = settings.LowSpeedSeconds.ToString();
+        LogRetentionDays.Text = settings.LogRetentionDays.ToString();
+        LogMaxTotalMB.Text = settings.LogMaxTotalMB.ToString();
         DeleteArchive.IsChecked = settings.DeleteArchiveAfterExtract;
         SkipCompleted.IsChecked = settings.SkipCompleted;
         KeepSidecars.IsChecked = settings.KeepSidecarFiles;
@@ -88,6 +90,8 @@ public partial class SettingsPage : Page
         settings.SingleFileParallelism = Number(SingleParallelism.Text, 10, 1, 20);
         settings.LowSpeedThresholdKBps = Number(LowSpeedThreshold.Text, 512, 1, 102400);
         settings.LowSpeedSeconds = Number(LowSpeedSeconds.Text, 180, 10, 3600);
+        settings.LogRetentionDays = Number(LogRetentionDays.Text, 30, 1, 3650);
+        settings.LogMaxTotalMB = Number(LogMaxTotalMB.Text, 100, 10, 10240);
         settings.DeleteArchiveAfterExtract = DeleteArchive.IsChecked == true;
         settings.SkipCompleted = SkipCompleted.IsChecked == true;
         settings.KeepSidecarFiles = KeepSidecars.IsChecked == true;

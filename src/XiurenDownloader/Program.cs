@@ -228,7 +228,10 @@ internal static class Headless
         var line = "[" + DateTime.Now.ToString("HH:mm:ss") + "] " + text;
         lock (LogGate)
         {
-            File.AppendAllText(Path.Combine(AppPaths.LogDir, DateTime.Now.ToString("yyyyMMdd") + ".log"), line + Environment.NewLine, Encoding.UTF8);
+            File.AppendAllText(
+                LogMaintenance.CurrentLogPath("", LogMaintenance.DefaultMaxFileMB),
+                line + Environment.NewLine,
+                Encoding.UTF8);
         }
     }
 }
@@ -556,6 +559,9 @@ internal sealed class Settings
     public int LowSpeedThresholdKBps { get; set; } = 512;
     public int LowSpeedSeconds { get; set; } = 180;
     public int LowSpeedRetryCount { get; set; } = 2;
+    public int LogRetentionDays { get; set; } = 30;
+    public int LogMaxTotalMB { get; set; } = 100;
+    public int LogMaxFileMB { get; set; } = LogMaintenance.DefaultMaxFileMB;
     public double SlideshowSeconds { get; set; } = 5;
     public bool SkipCompleted { get; set; } = true;
     public bool DeleteArchiveAfterExtract { get; set; } = true;
@@ -579,6 +585,7 @@ internal sealed class Settings
             : new Settings();
         s.DetectTools();
         s.Save();
+        LogMaintenance.Cleanup(s);
         return s;
     }
 
@@ -2120,6 +2127,7 @@ internal sealed class MainForm : Form
     private bool refreshingGrids;
     private readonly ConcurrentQueue<string> pendingLogs = new();
     private readonly System.Windows.Forms.Timer logFlushTimer = new() { Interval = 500 };
+    private DateTime nextLogCleanup = DateTime.UtcNow.AddHours(1);
     private TabControl tabs = null!;
     private TabPage libraryPage = null!;
     private MediaLibraryView libraryView = null!;
@@ -2946,7 +2954,15 @@ internal sealed class MainForm : Form
         log.AppendText(text);
         try
         {
-            File.AppendAllText(Path.Combine(AppPaths.LogDir, DateTime.Now.ToString("yyyyMMdd") + ".log"), text, Encoding.UTF8);
+            File.AppendAllText(
+                LogMaintenance.CurrentLogPath("", settings.LogMaxFileMB),
+                text,
+                Encoding.UTF8);
+            if (DateTime.UtcNow >= nextLogCleanup)
+            {
+                LogMaintenance.Cleanup(settings);
+                nextLogCleanup = DateTime.UtcNow.AddHours(1);
+            }
         }
         catch { }
     }
