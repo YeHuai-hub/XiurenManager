@@ -104,7 +104,8 @@ public partial class StatisticsPage : Page
     private void OpenSelected()
     {
         if (SetGrid.SelectedItem is not StatisticsSetRow row) return;
-        new ViewerWindow(row.Item) { Owner = Window.GetWindow(this) }.ShowDialog();
+        var context = sets.Select(item => item.Item).ToArray();
+        new ViewerWindow(row.Item, context) { Owner = Window.GetWindow(this) }.ShowDialog();
         Refresh();
     }
 

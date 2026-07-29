@@ -346,7 +346,8 @@ public partial class LibraryPage : Page
     private void SetCard_OnClick(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: LocalStat item }) return;
-        var viewer = new ViewerWindow(item)
+        var context = currentCards.Select(card => card.Item).ToArray();
+        var viewer = new ViewerWindow(item, context)
         {
             Owner = Window.GetWindow(this)
         };

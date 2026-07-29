@@ -292,6 +292,7 @@
                         Minimum="0"
                         Maximum="1000"
                         PreviewMouseLeftButtonDown="PositionSlider_OnMouseDown"
+                        PreviewMouseMove="PositionSlider_OnMouseMove"
                         PreviewMouseLeftButtonUp="PositionSlider_OnMouseUp" />
                 <TextBlock x:Name="TimeText"
                            Grid.Column="1"

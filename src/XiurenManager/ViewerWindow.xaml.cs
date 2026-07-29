@@ -19,7 +19,9 @@ public sealed class ViewerMediaRow
 public partial class ViewerWindow : FluentWindow
 {
     private readonly AppState state = App.State;
-    private readonly LocalStat set;
+    private LocalStat set;
+    private readonly IReadOnlyList<LocalStat> setContext;
+    private int setIndex;
     private readonly ObservableCollection<ViewerMediaRow> media = [];
     private readonly ObservableCollection<string> tags = [];
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(300) };
@@ -29,24 +31,32 @@ public partial class ViewerWindow : FluentWindow
     private Media? playingMedia;
     private bool draggingPosition;
     private bool immersive;
+    private bool initialSetLoaded;
     private int imageLoadVersion;
 
-    internal ViewerWindow(LocalStat set)
+    internal ViewerWindow(LocalStat set, IReadOnlyList<LocalStat>? context = null)
     {
-        this.set = set;
+        var availableSets = (context ?? [set])
+            .Where(item => Directory.Exists(item.LocalDir))
+            .DistinctBy(item => Path.GetFullPath(item.LocalDir), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        setIndex = availableSets.FindIndex(item => SameSet(item, set));
+        if (setIndex < 0)
+        {
+            availableSets.Insert(0, set);
+            setIndex = 0;
+        }
+        setContext = availableSets;
+        this.set = setContext[setIndex];
+
         InitializeComponent();
-        state.WriteLog($"打开浏览器: {set.Model} / {set.Title}");
-        SetTitle.Text = set.Title;
+        state.WriteLog($"打开浏览器: {this.set.Model} / {this.set.Title}");
         AutoPlaySpeed.Value = Math.Clamp(state.Settings.SlideshowSeconds, 0.5, 30);
         UpdateAutoPlaySpeed();
-        foreach (var tag in state.Favorites.GetTags(set))
-            tags.Add(tag);
         TagItems.ItemsSource = tags;
-        TagsStatus.Text = tags.Count == 0 ? "暂无标签" : $"已有 {tags.Count} 个标签";
         Filmstrip.ItemsSource = media;
         InitializePlayer();
-        LoadMedia();
-        UpdateScore();
+        ContentRendered += ViewerWindow_OnContentRendered;
         timer.Tick += (_, _) => UpdatePlayback();
         timer.Start();
         slideshowTimer.Tick += (_, _) => SelectNextImage();
@@ -58,6 +68,15 @@ public partial class ViewerWindow : FluentWindow
             state.WriteLog($"关闭浏览器: {set.Model} / {set.Title}");
             DisposePlayer();
         };
+    }
+
+    private void ViewerWindow_OnContentRendered(object? sender, EventArgs e)
+    {
+        if (initialSetLoaded) return;
+        initialSetLoaded = true;
+        Dispatcher.BeginInvoke(
+            () => LoadSet(set, selectLast: false, writeLog: false),
+            DispatcherPriority.ContextIdle);
     }
 
     private void InitializePlayer()
@@ -84,7 +103,29 @@ public partial class ViewerWindow : FluentWindow
         }
     }
 
-    private void LoadMedia()
+    private void LoadSet(LocalStat nextSet, bool selectLast, bool writeLog = true)
+    {
+        slideshowTimer.Stop();
+        StopPlayback();
+        imageLoadVersion++;
+        media.Clear();
+        tags.Clear();
+        TagEditor.Clear();
+        CloseTags();
+
+        set = nextSet;
+        SetTitle.Text = set.Title;
+        foreach (var tag in state.Favorites.GetTags(set))
+            tags.Add(tag);
+        TagsStatus.Text = tags.Count == 0 ? "暂无标签" : $"已有 {tags.Count} 个标签";
+        UpdateScore();
+        LoadMedia(selectLast);
+
+        if (writeLog)
+            state.WriteLog($"切换浏览套图: {set.Model} / {set.Title}");
+    }
+
+    private void LoadMedia(bool selectLast)
     {
         if (!Directory.Exists(set.LocalDir))
         {
@@ -104,7 +145,7 @@ public partial class ViewerWindow : FluentWindow
             ViewerMessage.Text = "这套目录内没有图片或视频";
             return;
         }
-        Filmstrip.SelectedIndex = 0;
+        Filmstrip.SelectedIndex = selectLast ? media.Count - 1 : 0;
     }
 
     private async void ShowMedia(int index)
@@ -112,7 +153,8 @@ public partial class ViewerWindow : FluentWindow
         if (index < 0 || index >= media.Count) return;
         slideshowTimer.Stop();
         var item = media[index];
-        MediaTitle.Text = $"{index + 1} / {media.Count}    {item.Name}";
+        var setPosition = setContext.Count > 1 ? $"套图 {setIndex + 1} / {setContext.Count}    " : "";
+        MediaTitle.Text = $"{setPosition}{index + 1} / {media.Count}    {item.Name}";
         ViewerMessage.Text = "正在载入";
         ViewerMessage.Visibility = Visibility.Visible;
         if (item.IsVideo)
@@ -181,9 +223,46 @@ public partial class ViewerWindow : FluentWindow
 
     private void SelectRelative(int delta)
     {
-        if (media.Count == 0) return;
-        Filmstrip.SelectedIndex = Math.Clamp(Filmstrip.SelectedIndex + delta, 0, media.Count - 1);
+        var target = Filmstrip.SelectedIndex + delta;
+        if (target >= 0 && target < media.Count)
+        {
+            Filmstrip.SelectedIndex = target;
+            Filmstrip.ScrollIntoView(Filmstrip.SelectedItem);
+            return;
+        }
+
+        if (!TrySwitchSet(Math.Sign(delta), selectLast: delta < 0))
+            return;
         Filmstrip.ScrollIntoView(Filmstrip.SelectedItem);
+    }
+
+    private bool TrySwitchSet(int delta, bool selectLast)
+    {
+        for (var index = setIndex + delta; index >= 0 && index < setContext.Count; index += delta)
+        {
+            if (!HasMedia(setContext[index]))
+                continue;
+            setIndex = index;
+            LoadSet(setContext[setIndex], selectLast);
+            return true;
+        }
+        return false;
+    }
+
+    private bool HasMedia(LocalStat candidate)
+    {
+        try
+        {
+            var extensions = state.Settings.ImageExts
+                .Concat(state.Settings.VideoExts)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return Directory.EnumerateFiles(candidate.LocalDir, "*", SearchOption.AllDirectories)
+                .Any(path => !AppPaths.IsInsideTool(path) && extensions.Contains(Path.GetExtension(path)));
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private void AutoPlayToggle_OnChecked(object sender, RoutedEventArgs e)
@@ -370,13 +449,36 @@ public partial class ViewerWindow : FluentWindow
     private void PositionSlider_OnMouseDown(object sender, MouseButtonEventArgs e)
     {
         draggingPosition = true;
+        PositionSlider.CaptureMouse();
+        SeekFromPointer(e);
+        e.Handled = true;
+    }
+
+    private void PositionSlider_OnMouseMove(object sender, MouseEventArgs e)
+    {
+        if (!draggingPosition || e.LeftButton != MouseButtonState.Pressed) return;
+        SeekFromPointer(e);
+        e.Handled = true;
     }
 
     private void PositionSlider_OnMouseUp(object sender, MouseButtonEventArgs e)
     {
-        if (player is { Length: > 0 })
-            player.Time = (long)(player.Length * PositionSlider.Value / 1000d);
+        SeekFromPointer(e);
         draggingPosition = false;
+        PositionSlider.ReleaseMouseCapture();
+        e.Handled = true;
+    }
+
+    private void SeekFromPointer(MouseEventArgs e)
+    {
+        if (PositionSlider.ActualWidth <= 0) return;
+        var position = e.GetPosition(PositionSlider);
+        var ratio = Math.Clamp(position.X / PositionSlider.ActualWidth, 0, 1);
+        PositionSlider.Value =
+            PositionSlider.Minimum +
+            ratio * (PositionSlider.Maximum - PositionSlider.Minimum);
+        if (player is { Length: > 0 })
+            player.Time = (long)(player.Length * ratio);
     }
 
     private void VolumeSlider_OnValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -466,6 +568,10 @@ public partial class ViewerWindow : FluentWindow
             @"\d+",
             match => match.Value.PadLeft(16, '0'));
     }
+
+    private static bool SameSet(LocalStat left, LocalStat right) =>
+        Path.GetFullPath(left.LocalDir)
+            .Equals(Path.GetFullPath(right.LocalDir), StringComparison.OrdinalIgnoreCase);
 
     private static string FormatTime(long milliseconds)
     {
