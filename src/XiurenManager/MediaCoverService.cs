@@ -13,9 +13,13 @@ internal static class MediaCoverService
     private static readonly SemaphoreSlim LoadGate = new(3, 3);
     private static readonly ConcurrentDictionary<string, WeakReference<ImageSource>> CoverCache = new();
 
-    public static async Task<ImageSource?> LoadCoverAsync(LocalStat item, Settings settings, CancellationToken token)
+    public static async Task<ImageSource?> LoadCoverAsync(
+        LocalStat item,
+        Settings settings,
+        CancellationToken token,
+        int decodeWidth = 440)
     {
-        var cacheKey = item.LocalDir + "|" + item.LastScanned + "|" + item.TotalBytes;
+        var cacheKey = item.LocalDir + "|" + item.LastScanned + "|" + item.TotalBytes + "|" + decodeWidth;
         if (CoverCache.TryGetValue(cacheKey, out var cached) &&
             cached.TryGetTarget(out var cachedImage))
         {
@@ -43,7 +47,7 @@ internal static class MediaCoverService
                 try
                 {
                     result = await Task.Run(
-                        () => LoadBitmap(image, 440),
+                        () => LoadBitmap(image, decodeWidth),
                         token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
@@ -52,9 +56,13 @@ internal static class MediaCoverService
                 }
                 catch
                 {
-                    var converted = await ConvertToCoverAsync(image, settings, token).ConfigureAwait(false);
+                    var converted = await ConvertToCoverAsync(
+                        image,
+                        settings,
+                        token,
+                        decodeWidth).ConfigureAwait(false);
                     result = await Task.Run(
-                        () => LoadBitmap(converted, 440),
+                        () => LoadBitmap(converted, decodeWidth),
                         token).ConfigureAwait(false);
                 }
             }
@@ -63,9 +71,10 @@ internal static class MediaCoverService
                 var converted = await ConvertToCoverAsync(
                     media.Video,
                     settings,
-                    token).ConfigureAwait(false);
+                    token,
+                    decodeWidth).ConfigureAwait(false);
                 result = await Task.Run(
-                    () => LoadBitmap(converted, 440),
+                    () => LoadBitmap(converted, decodeWidth),
                     token).ConfigureAwait(false);
             }
 
@@ -148,7 +157,11 @@ internal static class MediaCoverService
         return image;
     }
 
-    private static async Task<string> ConvertToCoverAsync(string path, Settings settings, CancellationToken token)
+    private static async Task<string> ConvertToCoverAsync(
+        string path,
+        Settings settings,
+        CancellationToken token,
+        int decodeWidth)
     {
         var ffmpeg = Path.Combine(Path.GetDirectoryName(settings.FfprobePath) ?? "", "ffmpeg.exe");
         if (!File.Exists(ffmpeg))
@@ -156,7 +169,7 @@ internal static class MediaCoverService
 
         var info = new FileInfo(path);
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
-            info.FullName + "|" + info.Length + "|" + info.LastWriteTimeUtc.Ticks)));
+            info.FullName + "|" + info.Length + "|" + info.LastWriteTimeUtc.Ticks + "|" + decodeWidth)));
         var cacheDir = Path.Combine(AppPaths.DataDir, "cover-cache");
         Directory.CreateDirectory(cacheDir);
         var output = Path.Combine(cacheDir, hash + ".jpg");
@@ -177,7 +190,10 @@ internal static class MediaCoverService
         start.ArgumentList.Add("-i");
         start.ArgumentList.Add(path);
         start.ArgumentList.Add("-vf");
-        start.ArgumentList.Add("thumbnail,scale=440:330:force_original_aspect_ratio=increase,crop=440:330");
+        var height = Math.Max(1, decodeWidth * 3 / 4);
+        start.ArgumentList.Add(
+            $"thumbnail,scale={decodeWidth}:{height}:force_original_aspect_ratio=increase," +
+            $"crop={decodeWidth}:{height}");
         start.ArgumentList.Add("-frames:v");
         start.ArgumentList.Add("1");
         start.ArgumentList.Add("-q:v");

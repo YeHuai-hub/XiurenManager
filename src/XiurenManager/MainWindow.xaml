@@ -29,6 +29,10 @@
                            IsPaneOpen="True"
                            OpenPaneLength="190">
             <ui:NavigationView.MenuItems>
+                <ui:NavigationViewItem Content="随机推荐"
+                                       Icon="{ui:SymbolIcon Image24}"
+                                       NavigationCacheMode="Required"
+                                       TargetPageType="{x:Type pages:RecommendationPage}" />
                 <ui:NavigationViewItem Content="媒体库"
                                        Icon="{ui:SymbolIcon Library24}"
                                        NavigationCacheMode="Required"

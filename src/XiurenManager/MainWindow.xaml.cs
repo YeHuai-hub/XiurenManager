@@ -14,6 +14,6 @@ public partial class MainWindow : FluentWindow
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        RootNavigation.Navigate(typeof(LibraryPage));
+        RootNavigation.Navigate(typeof(RecommendationPage));
     }
 }
