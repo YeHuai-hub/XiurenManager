@@ -89,6 +89,84 @@ internal static class MediaCoverService
         }
     }
 
+    public static Task<string[]> FindPreviewMediaAsync(
+        LocalStat item,
+        Settings settings,
+        int count,
+        CancellationToken token)
+    {
+        return Task.Run(() =>
+        {
+            var extensions = settings.ImageExts
+                .Concat(settings.VideoExts)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return Directory.EnumerateFiles(item.LocalDir, "*", SearchOption.AllDirectories)
+                .Where(path => !AppPaths.IsInsideTool(path))
+                .Where(path => extensions.Contains(Path.GetExtension(path)))
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .Take(Math.Max(0, count))
+                .Select(path =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    return path;
+                })
+                .ToArray();
+        }, token);
+    }
+
+    public static async Task<ImageSource?> LoadMediaPreviewAsync(
+        string path,
+        Settings settings,
+        CancellationToken token,
+        int decodeWidth)
+    {
+        await LoadGate.WaitAsync(token).ConfigureAwait(false);
+        try
+        {
+            var imageExts = settings.ImageExts.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (imageExts.Contains(Path.GetExtension(path)))
+            {
+                try
+                {
+                    return await Task.Run(
+                        () => LoadBitmap(path, decodeWidth),
+                        token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch
+                {
+                    var converted = await ConvertToCoverAsync(
+                        path,
+                        settings,
+                        token,
+                        decodeWidth).ConfigureAwait(false);
+                    return await Task.Run(
+                        () => LoadBitmap(converted, decodeWidth),
+                        token).ConfigureAwait(false);
+                }
+            }
+
+            var videoExts = settings.VideoExts.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (!videoExts.Contains(Path.GetExtension(path)))
+                return null;
+            var frame = await ConvertToCoverAsync(
+                path,
+                settings,
+                token,
+                decodeWidth).ConfigureAwait(false);
+            return await Task.Run(
+                () => LoadBitmap(frame, decodeWidth),
+                token).ConfigureAwait(false);
+        }
+        finally
+        {
+            LoadGate.Release();
+        }
+    }
+
     private static (string? Image, string? Video) FindFirstMedia(
         string directory,
         HashSet<string> imageExts,

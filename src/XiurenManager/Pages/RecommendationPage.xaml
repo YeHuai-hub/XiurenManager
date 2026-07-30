@@ -35,27 +35,55 @@
                        Click="Shuffle_OnClick" />
         </Grid>
 
-        <Grid Grid.Row="1"
-              Height="460"
-              MaxWidth="1000"
-              HorizontalAlignment="Center"
-              VerticalAlignment="Top">
+        <Grid x:Name="RecommendationStage"
+              Grid.Row="1"
+              HorizontalAlignment="Stretch"
+              VerticalAlignment="Stretch">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" MinHeight="360" />
+                <RowDefinition Height="14" />
+                <RowDefinition Height="150" />
+            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="1.65*" MinWidth="470" />
-                <ColumnDefinition Width="28" />
-                <ColumnDefinition Width="*" MinWidth="280" MaxWidth="370" />
+                <ColumnDefinition Width="2*" />
+                <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <Border Background="{StaticResource MediaCanvasBrush}"
+            <Border x:Name="StageFrame"
+                    Grid.ColumnSpan="2"
+                    Background="{StaticResource SurfaceBrush}"
                     BorderBrush="{StaticResource StrokeBrush}"
                     BorderThickness="1"
                     CornerRadius="6"
                     ClipToBounds="True">
                 <Grid>
-                    <Image x:Name="RecommendationCover"
-                           Stretch="Uniform"
-                           RenderOptions.BitmapScalingMode="HighQuality" />
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0">
+                        <Border.Background>
+                            <ImageBrush x:Name="RecommendationImageBrush"
+                                        Stretch="UniformToFill"
+                                        AlignmentX="Center"
+                                        AlignmentY="Center" />
+                        </Border.Background>
+                    </Border>
+
+                    <Rectangle Grid.ColumnSpan="2" IsHitTestVisible="False">
+                        <Rectangle.Fill>
+                            <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+                                <GradientStop Offset="0.42" Color="#0024282D" />
+                                <GradientStop Offset="0.54" Color="#7024282D" />
+                                <GradientStop Offset="0.67" Color="#F824282D" />
+                                <GradientStop Offset="1" Color="#FF24282D" />
+                            </LinearGradientBrush>
+                        </Rectangle.Fill>
+                    </Rectangle>
+
                     <StackPanel x:Name="CoverPlaceholder"
+                                Grid.Column="0"
                                 HorizontalAlignment="Center"
                                 VerticalAlignment="Center">
                         <ProgressBar x:Name="CoverProgress"
@@ -68,86 +96,183 @@
                                    TextAlignment="Center"
                                    Style="{StaticResource SecondaryTextStyle}" />
                     </StackPanel>
+
+                    <Grid Grid.Column="1" Margin="14,34,26,30">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock x:Name="ModelText"
+                                   Foreground="{StaticResource AccentTealBrush}"
+                                   FontSize="14"
+                                   FontWeight="SemiBold" />
+                        <TextBlock x:Name="TitleText"
+                                   Grid.Row="1"
+                                   Margin="0,10,0,0"
+                                   Foreground="{StaticResource PrimaryTextBrush}"
+                                   FontSize="20"
+                                   FontWeight="SemiBold"
+                                   TextWrapping="Wrap"
+                                   MaxHeight="78"
+                                   TextTrimming="CharacterEllipsis" />
+
+                        <Border Grid.Row="2"
+                                Height="1"
+                                Margin="0,18,0,15"
+                                Background="{StaticResource StrokeBrush}" />
+
+                        <StackPanel Grid.Row="3">
+                            <StackPanel Orientation="Horizontal">
+                                <ui:SymbolIcon Symbol="Image24"
+                                               FontSize="16"
+                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock x:Name="MediaText"
+                                           Margin="10,0,0,0"
+                                           Style="{StaticResource SecondaryTextStyle}"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                            <StackPanel Margin="0,11,0,0" Orientation="Horizontal">
+                                <ui:SymbolIcon Symbol="Archive24"
+                                               FontSize="16"
+                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock x:Name="SizeText"
+                                           Margin="10,0,0,0"
+                                           Style="{StaticResource SecondaryTextStyle}"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                            <ItemsControl x:Name="TagItems" Margin="0,13,0,0">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,0,7,7"
+                                                Padding="8,3"
+                                                BorderBrush="{StaticResource AccentTealBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="4">
+                                            <TextBlock Text="{Binding}"
+                                                       Foreground="{StaticResource AccentTealBrush}"
+                                                       FontSize="11" />
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <StackPanel Margin="0,7,0,0" Orientation="Horizontal">
+                                <ui:SymbolIcon Symbol="Heart24"
+                                               FontSize="17"
+                                               Foreground="{StaticResource FavoriteCoralBrush}" />
+                                <TextBlock x:Name="ScoreText"
+                                           Margin="9,0,0,0"
+                                           Foreground="{StaticResource FavoriteCoralBrush}"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="5">
+                            <ui:Button x:Name="WatchButton"
+                                       Height="42"
+                                       HorizontalAlignment="Stretch"
+                                       HorizontalContentAlignment="Center"
+                                       Content="打开观看"
+                                       Icon="{ui:SymbolIcon Play24}"
+                                       Click="Watch_OnClick" />
+                            <ui:Button x:Name="OpenFolderButton"
+                                       Height="38"
+                                       Margin="0,9,0,0"
+                                       HorizontalAlignment="Stretch"
+                                       HorizontalContentAlignment="Center"
+                                       Appearance="Secondary"
+                                       Content="打开目录"
+                                       Icon="{ui:SymbolIcon FolderOpen24}"
+                                       Click="OpenFolder_OnClick" />
+                        </StackPanel>
+                    </Grid>
                 </Grid>
             </Border>
 
-            <Grid Grid.Column="2">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
-
-                <TextBlock x:Name="ModelText"
-                           Foreground="{StaticResource AccentTealBrush}"
-                           FontSize="15"
-                           FontWeight="SemiBold" />
-                <TextBlock x:Name="TitleText"
-                           Grid.Row="1"
-                           Margin="0,10,0,0"
-                           Foreground="{StaticResource PrimaryTextBrush}"
-                           FontSize="20"
-                           FontWeight="SemiBold"
-                           TextWrapping="Wrap" />
-
-                <StackPanel Grid.Row="2" Margin="0,17,0,0">
-                    <TextBlock x:Name="MediaText"
-                               Style="{StaticResource SecondaryTextStyle}" />
-                    <TextBlock x:Name="SizeText"
-                               Margin="0,7,0,0"
-                               Style="{StaticResource SecondaryTextStyle}" />
-                    <TextBlock x:Name="ScoreText"
-                               Margin="0,7,0,0"
-                               Foreground="{StaticResource FavoriteCoralBrush}"
-                               FontWeight="SemiBold" />
-                </StackPanel>
-
-                <ItemsControl x:Name="TagItems" Grid.Row="3" Margin="0,16,0,0">
-                    <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <WrapPanel />
-                        </ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Border Margin="0,0,7,7"
-                                    Padding="9,4"
-                                    Background="{StaticResource SurfaceBrush}"
-                                    BorderBrush="{StaticResource StrokeBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="4">
-                                <TextBlock Text="{Binding}"
-                                           Foreground="{StaticResource SecondaryTextBrush}"
-                                           FontSize="11" />
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-
-                <StackPanel Grid.Row="4" Margin="0,22,0,0">
-                    <ui:Button x:Name="WatchButton"
-                               Height="42"
-                               HorizontalAlignment="Stretch"
-                               HorizontalContentAlignment="Center"
-                               Content="打开观看"
-                               Icon="{ui:SymbolIcon Play24}"
-                               Click="Watch_OnClick" />
-                    <ui:Button x:Name="OpenFolderButton"
-                               Height="38"
-                               Margin="0,10,0,0"
-                               HorizontalAlignment="Stretch"
-                               HorizontalContentAlignment="Center"
-                               Appearance="Secondary"
-                               Content="打开目录"
-                               Icon="{ui:SymbolIcon FolderOpen24}"
-                               Click="OpenFolder_OnClick" />
-                </StackPanel>
-            </Grid>
+            <ListBox x:Name="PreviewStrip"
+                     Grid.Row="2"
+                     Grid.Column="0"
+                     BorderThickness="0"
+                     Background="Transparent"
+                     HorizontalContentAlignment="Stretch"
+                     SelectionChanged="PreviewStrip_OnSelectionChanged"
+                     PreviewMouseWheel="PreviewStrip_OnPreviewMouseWheel"
+                     ScrollViewer.CanContentScroll="True"
+                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                     ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                     VirtualizingPanel.IsVirtualizing="True"
+                     VirtualizingPanel.VirtualizationMode="Recycling">
+                <ListBox.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <VirtualizingStackPanel Orientation="Horizontal" />
+                    </ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Width" Value="100" />
+                        <Setter Property="Height" Value="134" />
+                        <Setter Property="Margin" Value="0,0,8,0" />
+                        <Setter Property="Padding" Value="0" />
+                        <Setter Property="BorderThickness" Value="1" />
+                        <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+                        <Setter Property="Background" Value="{StaticResource MediaCanvasBrush}" />
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                        <Setter Property="Cursor" Value="Hand" />
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <Border x:Name="PreviewFrame"
+                                            Background="{TemplateBinding Background}"
+                                            BorderBrush="{TemplateBinding BorderBrush}"
+                                            BorderThickness="{TemplateBinding BorderThickness}"
+                                            CornerRadius="4"
+                                            ClipToBounds="True">
+                                        <ContentPresenter />
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="PreviewFrame"
+                                                    Property="BorderBrush"
+                                                    Value="{StaticResource AccentTealBrush}" />
+                                        </Trigger>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="PreviewFrame"
+                                                    Property="BorderBrush"
+                                                    Value="{StaticResource AccentTealBrush}" />
+                                            <Setter TargetName="PreviewFrame"
+                                                    Property="BorderThickness"
+                                                    Value="2" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Image Source="{Binding Thumbnail}"
+                               Stretch="UniformToFill"
+                               Loaded="PreviewImage_OnLoaded"
+                               RenderOptions.BitmapScalingMode="HighQuality" />
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
 
             <TextBlock x:Name="EmptyMessage"
-                       Grid.ColumnSpan="3"
+                       Grid.RowSpan="3"
+                       Grid.ColumnSpan="2"
                        Text="媒体库中还没有可推荐的写真"
                        Foreground="{StaticResource SecondaryTextBrush}"
                        FontSize="16"
