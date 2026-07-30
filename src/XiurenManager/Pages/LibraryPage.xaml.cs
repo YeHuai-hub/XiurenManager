@@ -13,11 +13,13 @@ namespace XiurenManager.Pages;
 
 public sealed class ModelLibraryRow
 {
+    public string Category { get; init; } = LibraryPaths.DefaultCategory;
     public string Name { get; init; } = "";
     public int SetCount { get; init; }
     public int MediaCount { get; init; }
     public int Score { get; init; }
-    public string Detail => $"{SetCount} 套  ·  {MediaCount} 个媒体";
+    public string Key => Category + "|" + Name;
+    public string DisplayDetail => $"{Category} · {SetCount} 套 · {MediaCount} 个媒体";
 }
 
 internal sealed class SetCardRow : INotifyPropertyChanged
@@ -92,6 +94,7 @@ public partial class LibraryPage : Page
     private int cardColumns;
     private CancellationTokenSource coverCts = new();
     private bool fileOperationRunning;
+    private bool categoryFilterLoading;
     private int filterVersion;
 
     public LibraryPage()
@@ -119,29 +122,60 @@ public partial class LibraryPage : Page
     private void LoadLibrary()
     {
         ConstrainBodyToViewport();
-        var selected = (ModelList.SelectedItem as ModelLibraryRow)?.Name;
+        var selected = (ModelList.SelectedItem as ModelLibraryRow)?.Key;
+        var selectedCategory = CategoryFilter.SelectedItem as string ?? "全部分类";
+        categoryFilterLoading = true;
+        var categoryItems = state.Database.LocalFiles
+            .Select(x => x.Category)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .Prepend("全部分类")
+            .ToArray();
+        CategoryFilter.ItemsSource = categoryItems;
+        CategoryFilter.SelectedItem = categoryItems.Contains(
+            selectedCategory,
+            StringComparer.OrdinalIgnoreCase)
+            ? categoryItems.First(x => x.Equals(
+                selectedCategory,
+                StringComparison.OrdinalIgnoreCase))
+            : "全部分类";
+        selectedCategory = CategoryFilter.SelectedItem as string ?? "全部分类";
+        categoryFilterLoading = false;
         models.Clear();
-        foreach (var group in state.Database.LocalFiles
+        var localFiles = state.Database.LocalFiles
+            .Where(x => selectedCategory.Equals("全部分类", StringComparison.OrdinalIgnoreCase) ||
+                        x.Category.Equals(
+                            selectedCategory,
+                            StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        foreach (var group in localFiles
                      .Where(x => Directory.Exists(x.LocalDir))
-                     .GroupBy(x => x.Model)
+                     .GroupBy(x => new { x.Category, x.Model })
                      .Select(g => new ModelLibraryRow
                      {
-                         Name = g.Key,
+                         Category = g.Key.Category,
+                         Name = g.Key.Model,
                          SetCount = g.Count(),
                          MediaCount = g.Sum(x => x.ImageCount + x.VideoCount + x.InvalidVideoCount),
                          Score = g.Sum(state.Favorites.GetScore)
                      })
                      .OrderByDescending(x => x.Score)
+                     .ThenBy(x => x.Category)
                      .ThenBy(x => x.Name))
         {
             models.Add(group);
         }
 
-        var sets = state.Database.LocalFiles.Count;
-        var images = state.Database.LocalFiles.Sum(x => x.ImageCount);
-        var videos = state.Database.LocalFiles.Sum(x => x.VideoCount + x.InvalidVideoCount);
+        var sets = localFiles.Length;
+        var images = localFiles.Sum(x => x.ImageCount);
+        var videos = localFiles.Sum(x => x.VideoCount + x.InvalidVideoCount);
+        var categoryCount = localFiles
+            .Select(x => x.Category)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
         LibrarySummary.Text =
-            $"{models.Count} 位模特  ·  {sets} 套  ·  {images:N0} 张图片  ·  {videos:N0} 个视频";
+            $"{categoryCount} 个分类 · {models.Count} 个人物 · {sets} 套 · " +
+            $"{images:N0} 张图片 · {videos:N0} 个视频";
         if (models.Count == 0)
         {
             currentCards = [];
@@ -151,7 +185,7 @@ public partial class LibraryPage : Page
         }
 
         var index = models.ToList().FindIndex(x =>
-            x.Name.Equals(selected, StringComparison.OrdinalIgnoreCase));
+            x.Key.Equals(selected, StringComparison.OrdinalIgnoreCase));
         ModelList.SelectedIndex = index >= 0 ? index : 0;
     }
 
@@ -224,6 +258,9 @@ public partial class LibraryPage : Page
             [' ', '\t', ',', '，', ';', '；', '|'],
             StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var values = state.Database.LocalFiles
+            .Where(x => x.Category.Equals(
+                model.Category,
+                StringComparison.OrdinalIgnoreCase))
             .Where(x => x.Model.Equals(model.Name, StringComparison.OrdinalIgnoreCase))
             .Where(x => terms.Length == 0 || MatchesFilter(x, terms))
             .Select(x => new SetCardRow
@@ -333,6 +370,7 @@ public partial class LibraryPage : Page
         var tags = state.Favorites.GetTags(item);
         return terms.All(term =>
             item.Title.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+            item.Category.Contains(term, StringComparison.OrdinalIgnoreCase) ||
             item.Model.Contains(term, StringComparison.OrdinalIgnoreCase) ||
             item.LocalDir.Contains(term, StringComparison.OrdinalIgnoreCase) ||
             tags.Any(tag => tag.Contains(term, StringComparison.OrdinalIgnoreCase)));
@@ -341,6 +379,14 @@ public partial class LibraryPage : Page
     private void FavoriteOnly_OnChanged(object sender, RoutedEventArgs e)
     {
         if (IsLoaded) RefreshCards();
+    }
+
+    private void CategoryFilter_OnSelectionChanged(
+        object sender,
+        SelectionChangedEventArgs e)
+    {
+        if (IsLoaded && !categoryFilterLoading)
+            LoadLibrary();
     }
 
     private void SetCard_OnClick(object sender, RoutedEventArgs e)
@@ -540,18 +586,23 @@ public partial class LibraryPage : Page
     private void UpdateMovedMetadata(LocalStat item, string target)
     {
         var oldPath = NormalizePath(item.LocalDir);
+        var oldCategory = item.Category;
         var oldModel = item.Model;
         var oldTitle = item.Title;
         var newModel = Directory.GetParent(target)?.Name ?? item.Model;
         var newTitle = Path.GetFileName(target);
+        var newCategory = item.Category;
+        TryGetTrackedLocation(target, out newCategory, out newModel, out newTitle);
         state.Favorites.UpdateLocation(item, target, newModel, newTitle);
 
         foreach (var resource in state.Database.Resources.Where(x =>
                      NormalizePath(x.LocalDir).Equals(oldPath, StringComparison.OrdinalIgnoreCase) ||
-                     (x.Model.Equals(oldModel, StringComparison.OrdinalIgnoreCase) &&
+                     (x.Category.Equals(oldCategory, StringComparison.OrdinalIgnoreCase) &&
+                      x.Model.Equals(oldModel, StringComparison.OrdinalIgnoreCase) &&
                       x.Title.Equals(oldTitle, StringComparison.OrdinalIgnoreCase))))
         {
             resource.LocalDir = target;
+            resource.Category = newCategory;
         }
 
         state.Database.LocalFiles.RemoveAll(x =>
@@ -559,6 +610,7 @@ public partial class LibraryPage : Page
         if (IsTrackedSetPath(target))
         {
             item.LocalDir = target;
+            item.Category = newCategory;
             item.Model = newModel;
             item.Title = newTitle;
             item.LastScanned = DateTime.Now.ToString("s");
@@ -581,6 +633,13 @@ public partial class LibraryPage : Page
         state.Database.LocalFiles.RemoveAll(x => PathsEqual(x.LocalDir, target));
         state.Database.LocalFiles.Add(new LocalStat
         {
+            Category = TryGetTrackedLocation(
+                target,
+                out var category,
+                out _,
+                out _)
+                ? category
+                : source.Category,
             Model = Directory.GetParent(target)?.Name ?? source.Model,
             Title = Path.GetFileName(target),
             LocalDir = target,
@@ -606,9 +665,34 @@ public partial class LibraryPage : Page
 
     private bool IsTrackedSetPath(string path)
     {
+        return TryGetTrackedLocation(path, out _, out _, out _);
+    }
+
+    private bool TryGetTrackedLocation(
+        string path,
+        out string category,
+        out string model,
+        out string title)
+    {
+        category = LibraryPaths.DefaultCategory;
+        model = Directory.GetParent(path)?.Name ?? "";
+        title = Path.GetFileName(path);
         var modelDir = Directory.GetParent(path);
-        return modelDir?.Parent != null &&
-               PathsEqual(modelDir.Parent.FullName, state.Settings.DownloadRoot);
+        var categoryDir = modelDir?.Parent;
+        if (categoryDir?.Parent != null &&
+            PathsEqual(categoryDir.Parent.FullName, state.Settings.DownloadRoot))
+        {
+            category = categoryDir.Name;
+            return true;
+        }
+
+        if (categoryDir != null && state.Settings.LegacyDownloadRoots.Any(root =>
+                PathsEqual(categoryDir.FullName, root)))
+        {
+            category = LibraryPaths.DefaultCategory;
+            return true;
+        }
+        return false;
     }
 
     private async Task<bool> ConfirmAsync(string title, string content, string primaryText)

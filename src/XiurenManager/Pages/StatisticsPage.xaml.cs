@@ -8,9 +8,12 @@ namespace XiurenManager.Pages;
 
 internal sealed class StatisticsModelRow
 {
+    public string Category { get; init; } = LibraryPaths.DefaultCategory;
     public string Name { get; init; } = "";
     public int SetCount { get; init; }
     public int Score { get; init; }
+    public string Key => Category + "|" + Name;
+    public string DisplayName => $"[{Category}] {Name}";
 }
 
 internal sealed class StatisticsSetRow
@@ -64,24 +67,32 @@ public partial class StatisticsPage : Page
 
     private void Refresh()
     {
-        var selected = (ModelGrid.SelectedItem as StatisticsModelRow)?.Name;
+        var selected = (ModelGrid.SelectedItem as StatisticsModelRow)?.Key;
         models.Clear();
         foreach (var group in state.Database.LocalFiles
                      .Where(x => Directory.Exists(x.LocalDir))
-                     .GroupBy(x => x.Model)
+                     .GroupBy(x => new { x.Category, x.Model })
                      .Select(g => new StatisticsModelRow
                      {
-                         Name = g.Key,
+                         Category = g.Key.Category,
+                         Name = g.Key.Model,
                          SetCount = g.Count(),
                          Score = g.Sum(state.Favorites.GetScore)
                      })
                      .OrderByDescending(x => x.Score)
+                     .ThenBy(x => x.Category)
                      .ThenBy(x => x.Name))
             models.Add(group);
-        var index = models.ToList().FindIndex(x => x.Name.Equals(selected, StringComparison.OrdinalIgnoreCase));
+        var index = models.ToList().FindIndex(x =>
+            x.Key.Equals(selected, StringComparison.OrdinalIgnoreCase));
         ModelGrid.SelectedIndex = index >= 0 ? index : models.Count > 0 ? 0 : -1;
+        var categoryCount = state.Database.LocalFiles
+            .Select(x => x.Category)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
         StatisticsSummary.Text =
-            $"{models.Count} 位模特  ·  {state.Database.LocalFiles.Count} 套  ·  " +
+            $"{categoryCount} 个分类 · {models.Count} 个人物 · " +
+            $"{state.Database.LocalFiles.Count} 套 · " +
             $"{state.Database.LocalFiles.Sum(x => x.ImageCount):N0} 张图片  ·  " +
             $"{state.Database.LocalFiles.Sum(x => x.VideoCount):N0} 个视频";
     }
@@ -91,6 +102,9 @@ public partial class StatisticsPage : Page
         sets.Clear();
         if (ModelGrid.SelectedItem is not StatisticsModelRow model) return;
         foreach (var item in state.Database.LocalFiles
+                     .Where(x => x.Category.Equals(
+                         model.Category,
+                         StringComparison.OrdinalIgnoreCase))
                      .Where(x => x.Model.Equals(model.Name, StringComparison.OrdinalIgnoreCase))
                      .Select(x => new StatisticsSetRow { Item = x, Score = state.Favorites.GetScore(x) })
                      .OrderByDescending(x => x.Score)

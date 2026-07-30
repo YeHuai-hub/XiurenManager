@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Collections.ObjectModel;
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows;
@@ -66,6 +67,10 @@ public partial class RecommendationPage : Page
         {
             _ = LoadRecommendationVisualsAsync(recommendation);
         }
+        else if (recommendation != null)
+        {
+            RestartPreviewThumbnailLoading();
+        }
     }
 
     private void RecommendationPage_OnUnloaded(object sender, RoutedEventArgs e)
@@ -118,7 +123,7 @@ public partial class RecommendationPage : Page
         WatchButton.IsEnabled = true;
         OpenFolderButton.IsEnabled = true;
 
-        ModelText.Text = item.Model;
+        ModelText.Text = $"{item.Category} · {item.Model}";
         TitleText.Text = item.Title;
         MediaText.Text = $"{item.ImageCount:N0} 张图片  ·  " +
                          $"{item.VideoCount + item.InvalidVideoCount:N0} 个视频";
@@ -166,6 +171,7 @@ public partial class RecommendationPage : Page
             suppressPreviewSelection = true;
             PreviewStrip.SelectedIndex = previews.Count > 0 ? 0 : -1;
             suppressPreviewSelection = false;
+            _ = LoadAllPreviewThumbnailsAsync(previews.ToArray(), token);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -254,18 +260,34 @@ public partial class RecommendationPage : Page
         }
     }
 
-    private async void PreviewImage_OnLoaded(object sender, RoutedEventArgs e)
+    private async Task LoadAllPreviewThumbnailsAsync(
+        IEnumerable<RecommendationPreviewRow> rows,
+        CancellationToken token)
     {
-        if (sender is not Image { DataContext: RecommendationPreviewRow row } ||
-            row.Thumbnail != null ||
-            row.IsLoading ||
-            row.LoadAttempted)
+        var pending = new ConcurrentQueue<RecommendationPreviewRow>(rows);
+        var workers = Enumerable.Range(0, 3)
+            .Select(async _ =>
+            {
+                while (!token.IsCancellationRequested &&
+                       pending.TryDequeue(out var row))
+                {
+                    await LoadPreviewThumbnailAsync(row, token);
+                }
+            });
+        try
         {
-            return;
+            await Task.WhenAll(workers);
         }
+        catch (OperationCanceledException) { }
+    }
 
+    private async Task LoadPreviewThumbnailAsync(
+        RecommendationPreviewRow row,
+        CancellationToken token)
+    {
+        if (row.Thumbnail != null || row.IsLoading || row.LoadAttempted)
+            return;
         row.IsLoading = true;
-        var token = coverCts.Token;
         try
         {
             row.Thumbnail = await MediaCoverService.LoadMediaPreviewAsync(
@@ -288,13 +310,43 @@ public partial class RecommendationPage : Page
         }
     }
 
+    private void PreviewImage_OnLoaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Image { DataContext: RecommendationPreviewRow row } ||
+            row.Thumbnail != null ||
+            coverCts.IsCancellationRequested)
+        {
+            return;
+        }
+
+        _ = LoadPreviewThumbnailAsync(row, coverCts.Token);
+    }
+
+    private void RestartPreviewThumbnailLoading()
+    {
+        coverCts.Cancel();
+        coverCts.Dispose();
+        coverCts = new CancellationTokenSource();
+        var pending = previews
+            .Where(row => row.Thumbnail == null && !row.LoadAttempted)
+            .ToArray();
+        foreach (var row in pending)
+            row.IsLoading = false;
+        if (pending.Length > 0)
+            _ = LoadAllPreviewThumbnailsAsync(pending, coverCts.Token);
+    }
+
     private void PreviewStrip_OnPreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
         var viewer = FindVisualChild<ScrollViewer>(PreviewStrip);
         if (viewer == null || viewer.ScrollableWidth <= 0) return;
+        var itemDelta = Math.Clamp(
+            Math.Max(1, Math.Abs(e.Delta) / 120),
+            1,
+            3);
         viewer.ScrollToHorizontalOffset(
             Math.Clamp(
-                viewer.HorizontalOffset - e.Delta,
+                viewer.HorizontalOffset - Math.Sign(e.Delta) * itemDelta,
                 0,
                 viewer.ScrollableWidth));
         e.Handled = true;

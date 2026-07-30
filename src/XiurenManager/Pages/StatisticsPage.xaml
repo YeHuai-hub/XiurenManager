@@ -44,7 +44,7 @@
                       RowBackground="{StaticResource SurfaceBrush}"
                       AlternatingRowBackground="{StaticResource SurfaceHoverBrush}">
                 <DataGrid.Columns>
-                    <DataGridTextColumn Header="模特" Binding="{Binding Name}" Width="*" />
+                    <DataGridTextColumn Header="分类/人物" Binding="{Binding DisplayName}" Width="*" />
                     <DataGridTextColumn Header="套数" Binding="{Binding SetCount}" Width="60" />
                     <DataGridTextColumn Header="喜欢值" Binding="{Binding Score}" Width="70" />
                 </DataGrid.Columns>

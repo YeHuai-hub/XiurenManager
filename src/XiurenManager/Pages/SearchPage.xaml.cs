@@ -36,6 +36,8 @@ public partial class SearchPage : Page
     {
         SearchMode.SelectedIndex = state.Settings.SearchMode.Equals("Category", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
         CategoryPath.Text = state.Settings.CategoryPath;
+        DownloadCategory.ItemsSource = LibraryPaths.Categories(state.Settings);
+        DownloadCategory.Text = state.Settings.DownloadCategory;
         UpdateStatus();
     }
 
@@ -84,6 +86,11 @@ public partial class SearchPage : Page
     {
         state.Settings.SearchMode = (SearchMode.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "Global";
         state.Settings.CategoryPath = string.IsNullOrWhiteSpace(CategoryPath.Text) ? "/tbgx" : CategoryPath.Text.Trim();
+        state.Settings.DownloadCategory = LibraryPaths.NormalizeCategory(DownloadCategory.Text);
+        state.Settings.LibraryCategories = state.Settings.LibraryCategories
+            .Append(state.Settings.DownloadCategory)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
         state.Settings.Save();
     }
 

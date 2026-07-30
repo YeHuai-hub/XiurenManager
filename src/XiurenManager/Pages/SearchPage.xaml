@@ -78,12 +78,25 @@
                         <ColumnDefinition Width="150" />
                         <ColumnDefinition Width="260" />
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="44" />
+                        <RowDefinition Height="44" />
+                    </Grid.RowDefinitions>
                     <TextBlock Text="最多搜索页数" Style="{StaticResource SectionTitleStyle}" />
                     <ui:TextBox x:Name="PageCount" Grid.Column="1" Text="999" />
                     <TextBlock Grid.Column="3" Text="最大有效资源数" Style="{StaticResource SectionTitleStyle}" />
                     <ui:TextBox x:Name="MaxReady" Grid.Column="4" Text="9999" />
                     <TextBlock Grid.Column="6" Text="分类路径" Style="{StaticResource SectionTitleStyle}" />
                     <ui:TextBox x:Name="CategoryPath" Grid.Column="7" Text="/tbgx" />
+                    <TextBlock Grid.Row="1"
+                               Text="存入分类"
+                               Style="{StaticResource SectionTitleStyle}" />
+                    <ComboBox x:Name="DownloadCategory"
+                              Grid.Row="1"
+                              Grid.Column="1"
+                              Height="34"
+                              IsEditable="True"
+                              VerticalContentAlignment="Center" />
                 </Grid>
             </Expander>
 

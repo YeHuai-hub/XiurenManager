@@ -264,6 +264,7 @@
                     <DataTemplate>
                         <Image Source="{Binding Thumbnail}"
                                Stretch="UniformToFill"
+                               ToolTip="{Binding Path}"
                                Loaded="PreviewImage_OnLoaded"
                                RenderOptions.BitmapScalingMode="HighQuality" />
                     </DataTemplate>

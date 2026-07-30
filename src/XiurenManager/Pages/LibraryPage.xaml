@@ -45,6 +45,11 @@
                                TextTrimming="CharacterEllipsis"
                                VerticalAlignment="Center" />
                 </StackPanel>
+                <ComboBox x:Name="CategoryFilter"
+                          Width="130"
+                          Margin="0,0,10,0"
+                          SelectedIndex="0"
+                          SelectionChanged="CategoryFilter_OnSelectionChanged" />
                 <ui:TextBox x:Name="SetFilter"
                             Width="260"
                             PlaceholderText="标题 / 编号 / 模特 / 标签"
@@ -106,7 +111,7 @@
                                                Foreground="{StaticResource PrimaryTextBrush}"
                                                FontWeight="SemiBold"
                                                TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Text="{Binding Detail}"
+                                    <TextBlock Text="{Binding DisplayDetail}"
                                                Margin="0,3,0,0"
                                                Style="{StaticResource SecondaryTextStyle}" />
                                 </StackPanel>

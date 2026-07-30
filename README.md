@@ -24,7 +24,7 @@ dotnet run --project src\XiurenManager\XiurenManager.csproj
 - 标准安装程序输出到 `artifacts\installer`
 - 默认安装目录：`E:\Apps\写真资源管理器`
 - 私人配置、数据库、标签和日志继续保存在 `F:\秀人\_Tool`
-- 升级或卸载程序不会删除 `F:\秀人` 下的媒体文件，也不会覆盖私人数据
+- 升级或卸载程序不会删除 `F:\资源` 下的媒体文件，也不会覆盖私人数据
 - 构建命令：`powershell -ExecutionPolicy Bypass -File scripts\build-private-installer.ps1`
 
 安装器构建另外需要 Inno Setup 7，以及放置于 `tools\ffmpeg` 的本机 FFmpeg 便携文件；这些第三方二进制不纳入源码仓库。
@@ -35,7 +35,8 @@ dotnet run --project src\XiurenManager\XiurenManager.csproj
 
 默认目录：
 - 工具目录：`F:\秀人\_Tool`
-- 下载目录：`F:\秀人`
+- 资源库根目录：`F:\资源`
+- 网站下载分类：`F:\资源\秀人`
 - 配置文件：`config\settings.json`
 - 数据库：`data\xiuren.db`
 - 日志目录：`logs`
@@ -48,7 +49,9 @@ dotnet run --project src\XiurenManager\XiurenManager.csproj
 - 跳过没有百度网盘链接的免费资源
 - 通过本机已登录的 BaiduPCS-Go 下载会员资源
 - 支持资源级并发下载，设置页里的“资源并发数”最大为 5
-- 每套资源保存到 `F:\秀人\<模特名>\<页面标题>`
+- 每套网站资源保存到 `F:\资源\秀人\<模特名>\<页面标题>`
+- 媒体库采用 `分类\人物\套图` 三级结构，可同时管理秀人、COS、微密圈及后续自定义分类
+- 媒体库顶部可按分类筛选；统计、随机推荐和应用内浏览会保留套图所属分类
 - 压缩包自动改名为页面标题
 - 自动解压，解压成功后可自动删除原压缩包
 - 下载完成前使用 ffprobe/ffmpeg 检查视频结构，并抽查开头、中段、结尾画面
@@ -69,6 +72,8 @@ dotnet run --project src\XiurenManager\XiurenManager.csproj
 - 看完后由用户主动点击“看完本套 +1”，打开或播放不会自动加分
 - 喜爱值可以重复累加，也可“撤销 1”；喜欢合集只显示喜爱值大于 0 的套图
 - 统计页双击套图或点击“应用内浏览”，可直接进入相应套图
+- `scripts\migrate-library-batch.ps1` 可分批迁移旧目录，默认跳过下载中、最近变动和目标冲突的套图
+- `scripts\register-library-migration.ps1` 注册每 5 分钟迁移 20 套的可续跑计划任务，进度可在清理工具页查看或暂停
 
 注意：
 - 需要本机 BaiduPCS-Go 已经登录百度网盘账号。

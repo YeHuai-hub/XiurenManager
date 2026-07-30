@@ -181,7 +181,7 @@ internal static class Headless
         }
         if (!string.IsNullOrWhiteSpace(r.Model))
         {
-            var modelDir = Path.Combine(settings.DownloadRoot, XiurenClient.Safe(r.Model));
+            var modelDir = LibraryPaths.ModelRoot(settings, r.Category, r.Model);
             if (Directory.Exists(modelDir) && Directory.GetFiles(modelDir, "*", SearchOption.TopDirectoryOnly)
                     .Any(f => Downloader.LooseMediaMatchesTitle(f, r.Title) &&
                               (IsImage(settings, f) || IsValidVideo(settings, f))))
@@ -194,7 +194,7 @@ internal static class Headless
     {
         if (!string.IsNullOrWhiteSpace(r.LocalDir)) yield return r.LocalDir;
         if (!string.IsNullOrWhiteSpace(r.Model) && !string.IsNullOrWhiteSpace(r.Title))
-            yield return Path.Combine(settings.DownloadRoot, XiurenClient.Safe(r.Model), XiurenClient.Safe(r.Title));
+            yield return LibraryPaths.SetRoot(settings, r.Category, r.Model, r.Title);
     }
 
     private static bool IsImage(Settings settings, string f) =>
@@ -247,6 +247,9 @@ internal static class AppPaths
     public static readonly string DbFile = Path.Combine(DataDir, "xiuren.db");
     public static readonly string FavoritesFile = Path.Combine(DataDir, "favorites.json");
     public static string DownloadRoot => Directory.GetParent(ToolRoot)?.FullName ?? ToolRoot;
+    public static string LibraryRoot => Path.Combine(
+        Path.GetPathRoot(ToolRoot) ?? DownloadRoot,
+        "资源");
 
     public static void Ensure()
     {
@@ -547,7 +550,10 @@ internal sealed class Settings
     public string Password { get; set; } = "";
     public string SearchMode { get; set; } = "Global";
     public string CategoryPath { get; set; } = "/tbgx";
-    public string DownloadRoot { get; set; } = AppPaths.DownloadRoot;
+    public string DownloadRoot { get; set; } = AppPaths.LibraryRoot;
+    public string DownloadCategory { get; set; } = LibraryPaths.DefaultCategory;
+    public string[] LibraryCategories { get; set; } = [LibraryPaths.DefaultCategory, "COS", "微密圈"];
+    public string[] LegacyDownloadRoots { get; set; } = [];
     public string BaiduPcsPath { get; set; } = "";
     public string SevenZipPath { get; set; } = "";
     public string FfprobePath { get; set; } = "";
@@ -632,7 +638,18 @@ internal sealed class Settings
                 }
             }
         }
-        if (string.IsNullOrWhiteSpace(DownloadRoot)) DownloadRoot = AppPaths.DownloadRoot;
+        if (string.IsNullOrWhiteSpace(DownloadRoot)) DownloadRoot = AppPaths.LibraryRoot;
+        DownloadCategory = LibraryPaths.NormalizeCategory(DownloadCategory);
+        LibraryCategories = (LibraryCategories ?? [])
+            .Append(DownloadCategory)
+            .Select(LibraryPaths.NormalizeCategory)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        LegacyDownloadRoots = (LegacyDownloadRoots ?? [])
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => Path.GetFullPath(x.Trim()))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private static string FindEnv(string name)
@@ -645,6 +662,7 @@ internal sealed class Settings
 
 internal sealed class Database
 {
+    private static readonly object SaveGate = new();
     public List<ResourceItem> Resources { get; set; } = [];
     public List<JobItem> Jobs { get; set; } = [];
     public List<LocalStat> LocalFiles { get; set; } = [];
@@ -653,10 +671,30 @@ internal sealed class Database
     {
         AppPaths.Ensure();
         if (!File.Exists(AppPaths.DbFile)) return new Database();
-        return JsonSerializer.Deserialize<Database>(File.ReadAllText(AppPaths.DbFile, Encoding.UTF8), Settings.JsonOptions) ?? new Database();
+        var database = JsonSerializer.Deserialize<Database>(
+            File.ReadAllText(AppPaths.DbFile, Encoding.UTF8),
+            Settings.JsonOptions) ?? new Database();
+        foreach (var item in database.Resources)
+            item.Category = LibraryPaths.NormalizeCategory(item.Category);
+        foreach (var job in database.Jobs)
+            job.DownloadCategory = LibraryPaths.NormalizeCategory(job.DownloadCategory);
+        foreach (var item in database.LocalFiles)
+            item.Category = LibraryPaths.NormalizeCategory(item.Category);
+        return database;
     }
 
-    public void Save() => File.WriteAllText(AppPaths.DbFile, JsonSerializer.Serialize(this, Settings.JsonOptions), Encoding.UTF8);
+    public void Save()
+    {
+        lock (SaveGate)
+        {
+            var temp = AppPaths.DbFile + ".tmp";
+            File.WriteAllText(
+                temp,
+                JsonSerializer.Serialize(this, Settings.JsonOptions),
+                Encoding.UTF8);
+            File.Move(temp, AppPaths.DbFile, true);
+        }
+    }
 
     public ResourceItem Upsert(ResourceItem item)
     {
@@ -665,6 +703,7 @@ internal sealed class Database
         old.PostId = item.PostId;
         old.Title = item.Title;
         old.Model = item.Model;
+        old.Category = LibraryPaths.NormalizeCategory(item.Category);
         old.PanUrl = item.PanUrl;
         old.PanPassword = item.PanPassword;
         old.ExtractPassword = item.ExtractPassword;
@@ -680,6 +719,7 @@ internal sealed class ResourceItem
     public string PostId { get; set; } = "";
     public string Title { get; set; } = "";
     public string Model { get; set; } = "";
+    public string Category { get; set; } = LibraryPaths.DefaultCategory;
     public string DetailUrl { get; set; } = "";
     public string PanUrl { get; set; } = "";
     public string PanPassword { get; set; } = "";
@@ -702,6 +742,7 @@ internal sealed class JobItem
     public int MaxReady { get; set; } = 9999;
     public string SearchMode { get; set; } = "Global";
     public string CategoryPath { get; set; } = "/tbgx";
+    public string DownloadCategory { get; set; } = LibraryPaths.DefaultCategory;
     public string Status { get; set; } = "";
     public string Error { get; set; } = "";
     public string StartedAt { get; set; } = DateTime.Now.ToString("s");
@@ -710,6 +751,7 @@ internal sealed class JobItem
 
 internal sealed class LocalStat
 {
+    public string Category { get; set; } = LibraryPaths.DefaultCategory;
     public string Model { get; set; } = "";
     public string Title { get; set; } = "";
     public string LocalDir { get; set; } = "";
@@ -722,6 +764,7 @@ internal sealed class LocalStat
 
 internal sealed class ModelStat
 {
+    public string Category { get; set; } = LibraryPaths.DefaultCategory;
     public string Model { get; set; } = "";
     public int SetCount { get; set; }
     public int ImageCount { get; set; }
@@ -1215,6 +1258,7 @@ internal sealed class Downloader
     private sealed class CandidateGroup
     {
         public string Key { get; set; } = "";
+        public string Category { get; set; } = LibraryPaths.DefaultCategory;
         public string Model { get; set; } = "";
         public string Title { get; set; } = "";
         public List<ResourceItem> Items { get; set; } = [];
@@ -1289,7 +1333,7 @@ internal sealed class Downloader
 
     private async Task ProcessCandidateGroupAsync(CandidateGroup group, string configDir, object saveGate, CancellationToken ct)
     {
-        var modelDir = Path.Combine(settings.DownloadRoot, XiurenClient.Safe(group.Model));
+        var modelDir = LibraryPaths.ModelRoot(settings, group.Category, group.Model);
         Directory.CreateDirectory(modelDir);
 
         var existingDir = FindExistingMediaDir(modelDir, group.Title);
@@ -1347,7 +1391,7 @@ internal sealed class Downloader
 
     private async Task ProcessOneAsync(ResourceItem item, string configDir, object saveGate, CancellationToken ct, string? canonicalTitle = null)
     {
-        var modelDir = Path.Combine(settings.DownloadRoot, XiurenClient.Safe(item.Model));
+        var modelDir = LibraryPaths.ModelRoot(settings, item.Category, item.Model);
         var workTitle = canonicalTitle ?? item.Title;
         var titleDir = Path.Combine(modelDir, XiurenClient.Safe(workTitle));
         item.LocalDir = titleDir;
@@ -1481,10 +1525,15 @@ internal sealed class Downloader
     private List<CandidateGroup> BuildCandidateGroups(List<ResourceItem> items)
     {
         return items
-            .GroupBy(x => XiurenClient.Safe(x.Model) + "|" + ResourceKey(x.Title), StringComparer.OrdinalIgnoreCase)
+            .GroupBy(
+                x => LibraryPaths.NormalizeCategory(x.Category) + "|" +
+                     XiurenClient.Safe(x.Model) + "|" +
+                     ResourceKey(x.Title),
+                StringComparer.OrdinalIgnoreCase)
             .Select(g => new CandidateGroup
             {
                 Key = g.Key,
+                Category = LibraryPaths.NormalizeCategory(g.First().Category),
                 Model = g.First().Model,
                 Title = ChooseCanonicalTitle(g.ToList()),
                 Items = g.ToList()
@@ -2463,7 +2512,7 @@ internal sealed class MainForm : Form
         }
         if (!string.IsNullOrWhiteSpace(r.Model))
         {
-            var modelDir = Path.Combine(settings.DownloadRoot, XiurenClient.Safe(r.Model));
+            var modelDir = LibraryPaths.ModelRoot(settings, r.Category, r.Model);
             if (Directory.Exists(modelDir) && Directory.GetFiles(modelDir, "*", SearchOption.TopDirectoryOnly)
                     .Any(f => Downloader.LooseMediaMatchesTitle(f, r.Title) &&
                               (IsImageForStats(f) || IsValidVideoForStats(f))))
@@ -2476,7 +2525,7 @@ internal sealed class MainForm : Form
     {
         if (!string.IsNullOrWhiteSpace(r.LocalDir)) yield return r.LocalDir;
         if (!string.IsNullOrWhiteSpace(r.Model) && !string.IsNullOrWhiteSpace(r.Title))
-            yield return Path.Combine(settings.DownloadRoot, XiurenClient.Safe(r.Model), XiurenClient.Safe(r.Title));
+            yield return LibraryPaths.SetRoot(settings, r.Category, r.Model, r.Title);
     }
 
     private async Task<List<ResourceItem>> Search(JobItem job, CancellationToken ct)
@@ -2664,41 +2713,65 @@ internal sealed class MainForm : Form
 
     private string TopLevelSetDir(string file)
     {
+        var tracked = db.LocalFiles.FirstOrDefault(item =>
+            Path.GetFullPath(file).StartsWith(
+                Path.GetFullPath(item.LocalDir).TrimEnd('\\') + "\\",
+                StringComparison.OrdinalIgnoreCase));
+        if (tracked != null) return tracked.LocalDir;
         var relative = Path.GetRelativePath(settings.DownloadRoot, file);
         var parts = relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        if (parts.Length < 2) return Path.GetDirectoryName(file) ?? "";
-        return Path.Combine(settings.DownloadRoot, parts[0], parts[1]);
+        if (parts.Length < 3) return Path.GetDirectoryName(file) ?? "";
+        return Path.Combine(settings.DownloadRoot, parts[0], parts[1], parts[2]);
     }
 
     private string ResolveResourceLocalDir(ResourceItem item)
     {
         if (!string.IsNullOrWhiteSpace(item.LocalDir)) return item.LocalDir;
         if (string.IsNullOrWhiteSpace(item.Model) || string.IsNullOrWhiteSpace(item.Title)) return "";
-        return Path.Combine(settings.DownloadRoot, XiurenClient.Safe(item.Model), XiurenClient.Safe(item.Title));
+        return LibraryPaths.SetRoot(
+            settings,
+            item.Category,
+            item.Model,
+            item.Title);
     }
 
     private void Scan()
     {
         db.LocalFiles.Clear();
-        foreach (var modelDir in Directory.GetDirectories(settings.DownloadRoot).Where(x => !AppPaths.IsInsideTool(x)))
+        foreach (var categoryDir in Directory.GetDirectories(settings.DownloadRoot)
+                     .Where(x => !AppPaths.IsInsideTool(x)))
         {
-            foreach (var setDir in Directory.GetDirectories(modelDir).Where(x => !AppPaths.IsInsideTool(x)))
+            foreach (var modelDir in Directory.GetDirectories(categoryDir)
+                         .Where(x => !AppPaths.IsInsideTool(x)))
             {
-                var files = Directory.GetFiles(setDir, "*", SearchOption.AllDirectories).Where(x => !AppPaths.IsInsideTool(x)).ToArray();
-                var videos = files.Where(x => settings.VideoExts.Contains(Path.GetExtension(x), StringComparer.OrdinalIgnoreCase)).ToArray();
-                var quickInvalid = videos.Count(x => !VideoValidator.QuickHeaderLooksValid(x));
-                var invalidVideos = Math.Max(quickInvalid, VideoValidator.MarkedInvalidCount(setDir));
-                db.LocalFiles.Add(new LocalStat
+                foreach (var setDir in Directory.GetDirectories(modelDir)
+                             .Where(x => !AppPaths.IsInsideTool(x)))
                 {
-                    Model = Path.GetFileName(modelDir),
-                    Title = Path.GetFileName(setDir),
-                    LocalDir = setDir,
-                    ImageCount = files.Count(IsImageForStats),
-                    VideoCount = Math.Max(0, videos.Length - invalidVideos),
-                    InvalidVideoCount = invalidVideos,
-                    TotalBytes = files.Sum(f => new FileInfo(f).Length),
-                    LastScanned = DateTime.Now.ToString("s")
-                });
+                    var files = Directory.GetFiles(setDir, "*", SearchOption.AllDirectories)
+                        .Where(x => !AppPaths.IsInsideTool(x))
+                        .ToArray();
+                    var videos = files.Where(x => settings.VideoExts.Contains(
+                            Path.GetExtension(x),
+                            StringComparer.OrdinalIgnoreCase))
+                        .ToArray();
+                    var quickInvalid = videos.Count(x =>
+                        !VideoValidator.QuickHeaderLooksValid(x));
+                    var invalidVideos = Math.Max(
+                        quickInvalid,
+                        VideoValidator.MarkedInvalidCount(setDir));
+                    db.LocalFiles.Add(new LocalStat
+                    {
+                        Category = Path.GetFileName(categoryDir),
+                        Model = Path.GetFileName(modelDir),
+                        Title = Path.GetFileName(setDir),
+                        LocalDir = setDir,
+                        ImageCount = files.Count(IsImageForStats),
+                        VideoCount = Math.Max(0, videos.Length - invalidVideos),
+                        InvalidVideoCount = invalidVideos,
+                        TotalBytes = files.Sum(f => new FileInfo(f).Length),
+                        LastScanned = DateTime.Now.ToString("s")
+                    });
+                }
             }
         }
         db.Save();
@@ -2815,16 +2888,22 @@ internal sealed class MainForm : Form
         {
             resources.DataSource = new BindingList<ResourceItem>(db.Resources.OrderByDescending(x => x.LastChecked).ToList());
             jobs.DataSource = new BindingList<JobItem>(db.Jobs.ToList());
-            stats.DataSource = new BindingList<ModelStat>(db.LocalFiles.GroupBy(x => x.Model).Select(g => new ModelStat
+            stats.DataSource = new BindingList<ModelStat>(db.LocalFiles
+                .GroupBy(x => new { x.Category, x.Model })
+                .Select(g => new ModelStat
             {
-                Model = g.Key,
+                Category = g.Key.Category,
+                Model = g.Key.Model,
                 SetCount = g.Count(),
                 ImageCount = g.Sum(x => x.ImageCount),
                 VideoCount = g.Sum(x => x.VideoCount),
                 InvalidVideoCount = g.Sum(x => x.InvalidVideoCount),
                 TotalBytes = g.Sum(x => x.TotalBytes),
-                FailedCount = db.Resources.Count(r => r.Model == g.Key && r.DownloadStatus == "Failed")
-            }).OrderBy(x => x.Model).ToList());
+                FailedCount = db.Resources.Count(r =>
+                    r.Category == g.Key.Category &&
+                    r.Model == g.Key.Model &&
+                    r.DownloadStatus == "Failed")
+            }).OrderBy(x => x.Category).ThenBy(x => x.Model).ToList());
         }
         finally
         {
@@ -2840,14 +2919,16 @@ internal sealed class MainForm : Form
     {
         if (refreshingGrids) return;
         details.DataSource = stats.CurrentRow?.DataBoundItem is ModelStat m
-            ? new BindingList<LocalStat>(db.LocalFiles.Where(x => x.Model == m.Model).ToList())
+            ? new BindingList<LocalStat>(db.LocalFiles.Where(x =>
+                x.Category == m.Category &&
+                x.Model == m.Model).ToList())
             : new BindingList<LocalStat>();
     }
 
     private void OpenSelectedModelFolder()
     {
         if (stats.CurrentRow?.DataBoundItem is ModelStat m)
-            OpenFolder(Path.Combine(settings.DownloadRoot, m.Model));
+            OpenFolder(LibraryPaths.ModelRoot(settings, m.Category, m.Model));
     }
 
     private void OpenSelectedSetFolder()

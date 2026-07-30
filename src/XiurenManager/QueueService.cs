@@ -41,6 +41,7 @@ internal sealed class QueueService
             MaxReady = Math.Max(0, maxReady),
             SearchMode = state.Settings.SearchMode,
             CategoryPath = state.Settings.CategoryPath,
+            DownloadCategory = LibraryPaths.NormalizeCategory(state.Settings.DownloadCategory),
             Status = "Queued",
             StartedAt = DateTime.Now.ToString("s")
         };
@@ -69,7 +70,8 @@ internal sealed class QueueService
 
         if (job != null)
         {
-            if (job.Type == "SearchDownload" && HasPendingForModel(job.Target))
+            if (job.Type == "SearchDownload" &&
+                HasPendingForModel(job.Target, job.DownloadCategory))
             {
                 job.Type = "DownloadModelReady";
                 state.WriteLog($"检测到“{job.Target}”已有入库链接，继续操作将直接恢复未完成下载，不再从头搜索。");
@@ -178,9 +180,10 @@ internal sealed class QueueService
 
         if (job.Type == "DownloadModelReady")
         {
-            RepairMissingCompleted(job.Target);
+            RepairMissingCompleted(job.Target, job.DownloadCategory);
             var model = XiurenClient.Safe(job.Target.Trim());
             var resources = state.Database.Resources.Where(x =>
+                    x.Category.Equals(job.DownloadCategory, StringComparison.OrdinalIgnoreCase) &&
                     x.Model.Equals(model, StringComparison.OrdinalIgnoreCase) &&
                     x.Status.Equals("Ready", StringComparison.OrdinalIgnoreCase) &&
                     !x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase))
@@ -199,6 +202,7 @@ internal sealed class QueueService
         var settings = state.Settings;
         settings.SearchMode = string.IsNullOrWhiteSpace(job.SearchMode) ? settings.SearchMode : job.SearchMode;
         settings.CategoryPath = string.IsNullOrWhiteSpace(job.CategoryPath) ? settings.CategoryPath : job.CategoryPath;
+        settings.DownloadCategory = LibraryPaths.NormalizeCategory(job.DownloadCategory);
         settings.Save();
 
         var canonicalModel = XiurenClient.Safe(job.Target.Trim());
@@ -209,7 +213,11 @@ internal sealed class QueueService
             var saved = state.Database.Resources.FirstOrDefault(x =>
                 x.DetailUrl.Equals(detailUrl, StringComparison.OrdinalIgnoreCase) &&
                 !string.IsNullOrWhiteSpace(x.PanUrl));
-            if (saved != null) saved.Model = canonicalModel;
+            if (saved != null)
+            {
+                saved.Model = canonicalModel;
+                saved.Category = LibraryPaths.NormalizeCategory(job.DownloadCategory);
+            }
             return saved;
         }
 
@@ -226,11 +234,11 @@ internal sealed class QueueService
                 Progress(),
                 token,
                 FindSaved,
-                item => SaveResource(item, canonicalModel));
+                item => SaveResource(item, canonicalModel, job.DownloadCategory));
 
             foreach (var item in found)
             {
-                var stored = SaveResource(item, canonicalModel);
+                var stored = SaveResource(item, canonicalModel, job.DownloadCategory);
                 merged[stored.DetailUrl] = stored;
             }
             state.Database.Save();
@@ -239,21 +247,30 @@ internal sealed class QueueService
         return merged.Values.ToList();
     }
 
-    private ResourceItem SaveResource(ResourceItem item, string model)
+    private ResourceItem SaveResource(ResourceItem item, string model, string category)
     {
         item.Model = model;
+        item.Category = LibraryPaths.NormalizeCategory(category);
         var stored = state.Database.Upsert(item);
         stored.Model = model;
+        stored.Category = item.Category;
         state.Database.Save();
         return stored;
     }
 
-    private void RepairMissingCompleted(string? modelFilter = null)
+    private void RepairMissingCompleted(
+        string? modelFilter = null,
+        string? categoryFilter = null)
     {
         var model = XiurenClient.Safe((modelFilter ?? "").Trim());
+        var category = string.IsNullOrWhiteSpace(categoryFilter)
+            ? ""
+            : LibraryPaths.NormalizeCategory(categoryFilter);
         var repaired = 0;
         foreach (var item in state.Database.Resources.Where(x =>
                      x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase) &&
+                     (string.IsNullOrWhiteSpace(category) ||
+                      x.Category.Equals(category, StringComparison.OrdinalIgnoreCase)) &&
                      (string.IsNullOrWhiteSpace(model) ||
                       x.Model.Equals(model, StringComparison.OrdinalIgnoreCase))))
         {
@@ -270,10 +287,12 @@ internal sealed class QueueService
         state.NotifyJobsChanged();
     }
 
-    private bool HasPendingForModel(string modelName)
+    private bool HasPendingForModel(string modelName, string categoryName)
     {
         var model = XiurenClient.Safe(modelName.Trim());
+        var category = LibraryPaths.NormalizeCategory(categoryName);
         return state.Database.Resources.Any(x =>
+            x.Category.Equals(category, StringComparison.OrdinalIgnoreCase) &&
             x.Model.Equals(model, StringComparison.OrdinalIgnoreCase) &&
             x.Status.Equals("Ready", StringComparison.OrdinalIgnoreCase) &&
             !x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase) &&
@@ -285,10 +304,11 @@ internal sealed class QueueService
         var directories = new[]
         {
             item.LocalDir,
-            Path.Combine(
-                state.Settings.DownloadRoot,
-                XiurenClient.Safe(item.Model),
-                XiurenClient.Safe(item.Title))
+            LibraryPaths.SetRoot(
+                state.Settings,
+                item.Category,
+                item.Model,
+                item.Title)
         }.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase);
 
         foreach (var directory in directories)

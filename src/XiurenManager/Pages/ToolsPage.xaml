@@ -9,6 +9,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
         <StackPanel>
             <TextBlock Text="清理工具" Style="{StaticResource PageTitleStyle}" />
@@ -64,6 +65,38 @@
                            Content="检查视频"
                            Icon="{ui:SymbolIcon VideoClip24}"
                            Click="CheckVideos_OnClick" />
+            </Grid>
+        </Border>
+        <Border Grid.Row="4" Margin="0,12,0,0" Padding="18" CornerRadius="6" Background="{StaticResource SurfaceBrush}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="资源库迁移进度" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock x:Name="MigrationStatus"
+                               Text="尚未启动迁移任务"
+                               Margin="0,6,0,0"
+                               Style="{StaticResource SecondaryTextStyle}" />
+                </StackPanel>
+                <WrapPanel Grid.Column="1" VerticalAlignment="Center">
+                    <ui:Button Content="刷新"
+                               Icon="{ui:SymbolIcon ArrowSync24}"
+                               Click="RefreshMigration_OnClick" />
+                    <ui:Button Margin="8,0,0,0"
+                               Content="暂停"
+                               Icon="{ui:SymbolIcon Pause24}"
+                               Click="PauseMigration_OnClick" />
+                    <ui:Button Margin="8,0,0,0"
+                               Content="继续"
+                               Icon="{ui:SymbolIcon Play24}"
+                               Click="ResumeMigration_OnClick" />
+                    <ui:Button Margin="8,0,0,0"
+                               Content="日志"
+                               Icon="{ui:SymbolIcon DocumentText24}"
+                               Click="OpenMigrationLog_OnClick" />
+                </WrapPanel>
             </Grid>
         </Border>
     </Grid>

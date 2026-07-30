@@ -12,8 +12,14 @@ internal static class MediaMaintenanceService
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var deleted = 0;
         long bytes = 0;
-        foreach (var file in Directory.EnumerateFiles(state.Settings.DownloadRoot, "*", SearchOption.AllDirectories)
-                     .Where(x => !AppPaths.IsInsideTool(x)))
+        var setDirectories = ExistingSetDirectories(state);
+        foreach (var file in setDirectories
+                     .SelectMany(x => Directory.EnumerateFiles(
+                         x,
+                         "*",
+                         SearchOption.AllDirectories))
+                     .Where(x => !AppPaths.IsInsideTool(x))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
         {
             if (keep.Contains(Path.GetExtension(file))) continue;
             try
@@ -29,8 +35,11 @@ internal static class MediaMaintenanceService
             }
         }
 
-        foreach (var directory in Directory.EnumerateDirectories(
-                     state.Settings.DownloadRoot, "*", SearchOption.AllDirectories)
+        foreach (var directory in setDirectories
+                 .SelectMany(x => Directory.EnumerateDirectories(
+                     x,
+                     "*",
+                     SearchOption.AllDirectories))
                  .Where(x => !AppPaths.IsInsideTool(x))
                  .OrderByDescending(x => x.Length))
         {
@@ -48,9 +57,12 @@ internal static class MediaMaintenanceService
         AppState state,
         CancellationToken token)
     {
-        var files = Directory.EnumerateFiles(state.Settings.DownloadRoot, "*", SearchOption.AllDirectories)
+        var setDirectories = ExistingSetDirectories(state);
+        var files = setDirectories
+            .SelectMany(x => Directory.EnumerateFiles(x, "*", SearchOption.AllDirectories))
             .Where(x => !AppPaths.IsInsideTool(x))
             .Where(x => state.Settings.VideoExts.Contains(Path.GetExtension(x), StringComparer.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var results = new ConcurrentBag<VideoValidationResult>();
         var completed = 0;
@@ -67,7 +79,11 @@ internal static class MediaMaintenanceService
             });
 
         foreach (var group in results
-                     .Select(x => new { Result = x, Directory = SetDirectory(state.Settings.DownloadRoot, x.Path) })
+                     .Select(x => new
+                     {
+                         Result = x,
+                         Directory = FindSetDirectory(setDirectories, x.Path)
+                     })
                      .Where(x => !string.IsNullOrWhiteSpace(x.Directory))
                      .GroupBy(x => x.Directory, StringComparer.OrdinalIgnoreCase))
         {
@@ -79,10 +95,22 @@ internal static class MediaMaintenanceService
         return (results.Count - invalidCount, invalidCount);
     }
 
-    private static string SetDirectory(string root, string file)
+    private static string[] ExistingSetDirectories(AppState state)
     {
-        var parts = Path.GetRelativePath(root, file)
-            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return parts.Length >= 2 ? Path.Combine(root, parts[0], parts[1]) : "";
+        return state.Database.LocalFiles
+            .Select(x => x.LocalDir)
+            .Where(Directory.Exists)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static string FindSetDirectory(IEnumerable<string> directories, string file)
+    {
+        var fullFile = Path.GetFullPath(file);
+        return directories.FirstOrDefault(directory =>
+        {
+            var fullDirectory = Path.GetFullPath(directory).TrimEnd('\\') + "\\";
+            return fullFile.StartsWith(fullDirectory, StringComparison.OrdinalIgnoreCase);
+        }) ?? "";
     }
 }
