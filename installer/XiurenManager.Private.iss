@@ -41,7 +41,7 @@ Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式："
 
 [Files]
-Source: "..\publish-v3\*"; DestDir: "{app}"; Excludes: "libvlc\win-x86\*,libvlc\win-arm64\*"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\publish-v3\*"; DestDir: "{app}"; Excludes: "libvlc\win-x86\*,libvlc\win-arm64\*,tools\ffmpeg\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\tools\ffmpeg\bin\ffmpeg.exe"; DestDir: "{app}\tools\ffmpeg\bin"; Flags: ignoreversion
 Source: "..\tools\ffmpeg\bin\ffprobe.exe"; DestDir: "{app}\tools\ffmpeg\bin"; Flags: ignoreversion
 Source: "..\tools\ffmpeg\LICENSE"; DestDir: "{app}\tools\ffmpeg"; Flags: ignoreversion

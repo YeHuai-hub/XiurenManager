@@ -11,6 +11,16 @@ $outputDir = Join-Path $root "artifacts\installer"
 
 if (!$SkipPublish) {
     Get-Process XiurenManager -ErrorAction SilentlyContinue | Stop-Process -Force
+    $fullRoot = [IO.Path]::GetFullPath($root).TrimEnd('\')
+    $fullPublish = [IO.Path]::GetFullPath($publish).TrimEnd('\')
+    if (!$fullPublish.StartsWith(
+            $fullRoot + "\",
+            [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to clean a publish directory outside the tool workspace: $fullPublish"
+    }
+    if (Test-Path -LiteralPath $fullPublish) {
+        Remove-Item -LiteralPath $fullPublish -Recurse -Force
+    }
     & dotnet publish $project -c Release -r win-x64 --self-contained true --no-restore -o $publish -v:q
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet publish failed with exit code $LASTEXITCODE"
