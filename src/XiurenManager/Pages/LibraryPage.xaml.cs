@@ -127,6 +127,7 @@ public partial class LibraryPage : Page
         categoryFilterLoading = true;
         var categoryItems = state.Database.LocalFiles
             .Select(x => x.Category)
+            .Concat(LibraryPaths.Categories(state.Settings))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
             .Prepend("全部分类")

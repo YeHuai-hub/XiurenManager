@@ -595,6 +595,13 @@ internal sealed class Settings
         return s;
     }
 
+    public Settings Snapshot()
+    {
+        var json = JsonSerializer.Serialize(this, JsonOptions);
+        return JsonSerializer.Deserialize<Settings>(json, JsonOptions) ??
+               throw new InvalidOperationException("Unable to create settings snapshot.");
+    }
+
     public void Save()
     {
         AppPaths.Ensure();

@@ -167,12 +167,14 @@ internal sealed class QueueService
 
         if (job.Type == "DownloadReady")
         {
-            RepairMissingCompleted();
+            var category = LibraryPaths.NormalizeCategory(job.DownloadCategory);
+            RepairMissingCompleted(categoryFilter: category);
             var resources = state.Database.Resources.Where(x =>
+                    x.Category.Equals(category, StringComparison.OrdinalIgnoreCase) &&
                     x.Status.Equals("Ready", StringComparison.OrdinalIgnoreCase) &&
                     !x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase))
                 .ToList();
-            state.WriteLog($"下载就绪未完成项: {resources.Count} 条");
+            state.WriteLog($"下载“{category}”分类就绪未完成项: {resources.Count} 条");
             await new Downloader(state.Settings, state.Database, Progress()).RunAsync(resources, token);
             await ScanAsync(token);
             return;
@@ -199,11 +201,10 @@ internal sealed class QueueService
 
     private async Task<List<ResourceItem>> SearchAsync(JobItem job, CancellationToken token)
     {
-        var settings = state.Settings;
+        var settings = state.Settings.Snapshot();
         settings.SearchMode = string.IsNullOrWhiteSpace(job.SearchMode) ? settings.SearchMode : job.SearchMode;
         settings.CategoryPath = string.IsNullOrWhiteSpace(job.CategoryPath) ? settings.CategoryPath : job.CategoryPath;
         settings.DownloadCategory = LibraryPaths.NormalizeCategory(job.DownloadCategory);
-        settings.Save();
 
         var canonicalModel = XiurenClient.Safe(job.Target.Trim());
         var merged = new Dictionary<string, ResourceItem>(StringComparer.OrdinalIgnoreCase);
