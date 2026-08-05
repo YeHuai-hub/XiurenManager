@@ -200,7 +200,7 @@ internal static class Headless
     }
 
     private static bool IsImage(Settings settings, string f) =>
-        MediaFileValidator.HasContent(f) &&
+        MediaFileValidator.QuickImageHeaderLooksValid(f) &&
         settings.ImageExts.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase);
 
     private static bool IsValidVideo(Settings settings, string f)
@@ -320,16 +320,45 @@ internal sealed class VideoValidationResult
 
 internal static class MediaFileValidator
 {
-    public static bool HasContent(string file)
+    public static bool QuickImageHeaderLooksValid(string file)
     {
         try
         {
-            return File.Exists(file) && new FileInfo(file).Length >= 16;
+            Span<byte> header = stackalloc byte[32];
+            using var stream = File.OpenRead(file);
+            if (stream.Length < 16) return false;
+            var read = stream.Read(header);
+            if (read < 4) return false;
+
+            return header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF ||
+                   read >= 8 &&
+                   header[0] == 0x89 && header[1] == 0x50 && header[2] == 0x4E && header[3] == 0x47 &&
+                   header[4] == 0x0D && header[5] == 0x0A && header[6] == 0x1A && header[7] == 0x0A ||
+                   header[0] == (byte)'G' && header[1] == (byte)'I' && header[2] == (byte)'F' && header[3] == (byte)'8' ||
+                   header[0] == (byte)'B' && header[1] == (byte)'M' ||
+                   read >= 12 && header[0] == (byte)'R' && header[1] == (byte)'I' && header[2] == (byte)'F' && header[3] == (byte)'F' &&
+                   header[8] == (byte)'W' && header[9] == (byte)'E' && header[10] == (byte)'B' && header[11] == (byte)'P' ||
+                   header[0] == (byte)'I' && header[1] == (byte)'I' && header[2] == 0x2A && header[3] == 0x00 ||
+                   header[0] == (byte)'M' && header[1] == (byte)'M' && header[2] == 0x00 && header[3] == 0x2A ||
+                   read >= 12 && header[4] == (byte)'f' && header[5] == (byte)'t' && header[6] == (byte)'y' && header[7] == (byte)'p';
         }
         catch
         {
             return false;
         }
+    }
+
+    public static bool IsUsable(
+        string file,
+        IEnumerable<string> imageExtensions,
+        IEnumerable<string> videoExtensions)
+    {
+        var extension = Path.GetExtension(file);
+        if (imageExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
+            return QuickImageHeaderLooksValid(file);
+        if (videoExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
+            return VideoValidator.QuickHeaderLooksValid(file);
+        return false;
     }
 }
 
@@ -1639,7 +1668,7 @@ internal sealed class Downloader
         {
             item.DownloadStatus = "Failed";
             item.Error = ex.Message;
-            DeleteZeroByteMediaFiles(titleDir);
+            DeleteInvalidMediaFiles(titleDir);
             DeleteIfEmpty(titleDir);
             log.Report("失败: " + item.Title + " | " + ex.Message);
         }
@@ -1728,7 +1757,7 @@ internal sealed class Downloader
             NormalizeUnknownFileExtensions(titleDir);
             RenameArchives(titleDir, item.Title);
             await ExtractAsync(titleDir, item.ExtractPassword, ct);
-            DeleteZeroByteMediaFiles(titleDir);
+            DeleteInvalidMediaFiles(titleDir);
             FlattenMediaFiles(titleDir);
             CleanSidecars(titleDir);
             MoveSingleFolderUp(titleDir);
@@ -1807,7 +1836,7 @@ internal sealed class Downloader
         for (var pass = 0; pass < 5; pass++)
         {
             DeleteZeroByteArchives(dir);
-            DeleteZeroByteMediaFiles(dir);
+            DeleteInvalidMediaFiles(dir);
             var archives = Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories)
                 .Where(IsArchiveStart)
                 .Where(f => new FileInfo(f).Length > 0)
@@ -1838,7 +1867,7 @@ internal sealed class Downloader
                 foreach (var password in Passwords(passwords))
                 {
                     DeleteZeroByteArchives(dir);
-                    DeleteZeroByteMediaFiles(dir);
+                    DeleteInvalidMediaFiles(dir);
                     var args = new List<string> { "x", "-y", "-aoa", "-o.", inputName, "-p" + password };
                     if (await Proc(settings.SevenZipPath, args, dir, ct, true) == 0) { ok = true; break; }
                 }
@@ -1853,7 +1882,7 @@ internal sealed class Downloader
         }
         MoveSingleFolderUp(dir);
         DeleteZeroByteArchives(dir);
-        DeleteZeroByteMediaFiles(dir);
+        DeleteInvalidMediaFiles(dir);
     }
 
     private IEnumerable<string> Passwords(string value)
@@ -1923,11 +1952,11 @@ internal sealed class Downloader
             Try(() => File.Delete(f));
     }
 
-    private void DeleteZeroByteMediaFiles(string dir)
+    private void DeleteInvalidMediaFiles(string dir)
     {
         foreach (var f in EnumerateUserFiles(dir)
                      .Where(IsConfiguredMediaExtension)
-                     .Where(f => !MediaFileValidator.HasContent(f)))
+                     .Where(f => !IsMediaFile(f)))
             Try(() => File.Delete(f));
     }
 
@@ -2024,7 +2053,6 @@ internal sealed class Downloader
     private bool HasMedia(string dir) => Directory.Exists(dir) &&
         EnumerateUserFiles(dir).Any(f =>
             !File.Exists(f + ".BaiduPCS-Go-downloading") &&
-            MediaFileValidator.HasContent(f) &&
             IsMediaFile(f));
     private bool HasArchives(string dir) => Directory.Exists(dir) && EnumerateUserFiles(dir).Any(IsArchive);
 
@@ -2047,11 +2075,11 @@ internal sealed class Downloader
 
     private bool IsMediaFile(string f)
     {
-        if (!MediaFileValidator.HasContent(f)) return false;
         var ext = Path.GetExtension(f);
         if (string.IsNullOrWhiteSpace(ext))
             return GuessExtension(f) is ".mp4" or ".jpg" or ".png" or ".webp" or ".gif";
-        if (settings.ImageExts.Contains(ext, StringComparer.OrdinalIgnoreCase)) return true;
+        if (settings.ImageExts.Contains(ext, StringComparer.OrdinalIgnoreCase))
+            return MediaFileValidator.QuickImageHeaderLooksValid(f);
         if (settings.VideoExts.Contains(ext, StringComparer.OrdinalIgnoreCase)) return IsValidVideoFile(f);
         return false;
     }
@@ -3220,7 +3248,7 @@ internal sealed class MainForm : Form
     }
 
     private bool IsImageForStats(string f) =>
-        MediaFileValidator.HasContent(f) &&
+        MediaFileValidator.QuickImageHeaderLooksValid(f) &&
         settings.ImageExts.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase);
 
     private bool IsValidVideoForStats(string f)

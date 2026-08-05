@@ -371,8 +371,11 @@ public partial class RecommendationPage : Page
             return Directory.EnumerateFiles(item.LocalDir, "*", SearchOption.AllDirectories)
                 .Any(path =>
                     !AppPaths.IsInsideTool(path) &&
-                    MediaFileValidator.HasContent(path) &&
-                    extensions.Contains(Path.GetExtension(path)));
+                    extensions.Contains(Path.GetExtension(path)) &&
+                    MediaFileValidator.IsUsable(
+                        path,
+                        state.Settings.ImageExts,
+                        state.Settings.VideoExts));
         }
         catch
         {

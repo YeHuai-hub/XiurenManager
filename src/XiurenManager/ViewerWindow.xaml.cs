@@ -147,8 +147,7 @@ public partial class ViewerWindow : FluentWindow
         var videoExts = state.Settings.VideoExts.ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var path in Directory.EnumerateFiles(set.LocalDir, "*", SearchOption.AllDirectories)
                      .Where(x => !AppPaths.IsInsideTool(x))
-                     .Where(MediaFileValidator.HasContent)
-                     .Where(x => imageExts.Contains(Path.GetExtension(x)) || videoExts.Contains(Path.GetExtension(x)))
+                     .Where(x => MediaFileValidator.IsUsable(x, imageExts, videoExts))
                      .OrderBy(NaturalSortKey, StringComparer.OrdinalIgnoreCase))
             media.Add(new ViewerMediaRow { Path = path, IsVideo = videoExts.Contains(Path.GetExtension(path)) });
 
@@ -298,8 +297,11 @@ public partial class ViewerWindow : FluentWindow
             return Directory.EnumerateFiles(candidate.LocalDir, "*", SearchOption.AllDirectories)
                 .Any(path =>
                     !AppPaths.IsInsideTool(path) &&
-                    MediaFileValidator.HasContent(path) &&
-                    extensions.Contains(Path.GetExtension(path)));
+                    extensions.Contains(Path.GetExtension(path)) &&
+                    MediaFileValidator.IsUsable(
+                        path,
+                        state.Settings.ImageExts,
+                        state.Settings.VideoExts));
         }
         catch
         {

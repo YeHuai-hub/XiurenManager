@@ -403,7 +403,7 @@ internal sealed class QueueService
             {
                 var extension = Path.GetExtension(file);
                 if (state.Settings.ImageExts.Contains(extension, StringComparer.OrdinalIgnoreCase) &&
-                    MediaFileValidator.HasContent(file))
+                    MediaFileValidator.QuickImageHeaderLooksValid(file))
                     return true;
                 if (state.Settings.VideoExts.Contains(extension, StringComparer.OrdinalIgnoreCase) &&
                     VideoValidator.QuickHeaderLooksValid(file))
