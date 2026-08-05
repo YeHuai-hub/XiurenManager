@@ -126,7 +126,9 @@ internal static class LocalScanner
                         Model = model,
                         Title = Path.GetFileName(setDir),
                         LocalDir = setDir,
-                        ImageCount = files.Count(x => imageExts.Contains(x.Extension)),
+                        ImageCount = files.Count(x =>
+                            imageExts.Contains(x.Extension) &&
+                            MediaFileValidator.HasContent(x.FullName)),
                         VideoCount = Math.Max(0, videos.Length - invalidVideos),
                         InvalidVideoCount = invalidVideos,
                         TotalBytes = files.Sum(x => x.Length),

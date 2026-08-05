@@ -200,6 +200,7 @@ internal static class Headless
     }
 
     private static bool IsImage(Settings settings, string f) =>
+        MediaFileValidator.HasContent(f) &&
         settings.ImageExts.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase);
 
     private static bool IsValidVideo(Settings settings, string f)
@@ -315,6 +316,21 @@ internal sealed class VideoValidationResult
     public bool IsValid { get; set; }
     public string Error { get; set; } = "";
     public double DurationSeconds { get; set; }
+}
+
+internal static class MediaFileValidator
+{
+    public static bool HasContent(string file)
+    {
+        try
+        {
+            return File.Exists(file) && new FileInfo(file).Length >= 16;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 }
 
 internal static class VideoValidator
@@ -1095,11 +1111,7 @@ internal sealed class XiurenClient
             if (m.Success) pwd = m.Groups[1].Value;
         }
 
-        var extract = Regex.Match(
-            text,
-            @"解压(?:密码|码)?\s*[】\]\):：]*\s*([^\s，。；;,<>()（）]+(?:\s*(?:或|/|\|)\s*[^\s，。；;,<>()（）]+)?)")
-            .Groups[1].Value;
-        if (string.IsNullOrWhiteSpace(extract)) extract = "taotudao.com 或 www.taotudao.com";
+        var extract = ExtractArchivePassword(text);
 
         return new ResourceItem
         {
@@ -1119,6 +1131,22 @@ internal sealed class XiurenClient
             Status = string.IsNullOrWhiteSpace(pan) ? "MissingPan" : "Ready",
             LastChecked = DateTime.Now.ToString("s")
         };
+    }
+
+    internal static string ExtractArchivePassword(string text)
+    {
+        var match = Regex.Match(
+            text ?? "",
+            @"(?:解压密码|解压码)\s*[】\]\):：]?\s*([^\s，。；;,<>()（）]+(?:\s*(?:或|/|\|)\s*[^\s，。；;,<>()（）]+)?)",
+            RegexOptions.IgnoreCase);
+        var value = match.Groups[1].Value.Trim();
+        if (string.IsNullOrWhiteSpace(value) ||
+            value.Equals("教程", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("说明", StringComparison.OrdinalIgnoreCase))
+        {
+            return "taotudao.com 或 www.taotudao.com";
+        }
+        return value;
     }
 
     private static void ReportResolvedCategory(
@@ -1553,6 +1581,7 @@ internal sealed class Downloader
             if (HasArchives(titleDir))
             {
                 log.Report("发现本地压缩包，先尝试解压: " + item.Title);
+                await RefreshMissingPanPasswordAsync(item, ct);
                 await FinalizeLocalFiles(item, titleDir, ct);
                 return;
             }
@@ -1610,8 +1639,7 @@ internal sealed class Downloader
         {
             item.DownloadStatus = "Failed";
             item.Error = ex.Message;
-            if (!HasMedia(titleDir) && HasArchives(titleDir))
-                DeleteArchives(titleDir);
+            DeleteZeroByteMediaFiles(titleDir);
             DeleteIfEmpty(titleDir);
             log.Report("失败: " + item.Title + " | " + ex.Message);
         }
@@ -1700,6 +1728,7 @@ internal sealed class Downloader
             NormalizeUnknownFileExtensions(titleDir);
             RenameArchives(titleDir, item.Title);
             await ExtractAsync(titleDir, item.ExtractPassword, ct);
+            DeleteZeroByteMediaFiles(titleDir);
             FlattenMediaFiles(titleDir);
             CleanSidecars(titleDir);
             MoveSingleFolderUp(titleDir);
@@ -1778,6 +1807,7 @@ internal sealed class Downloader
         for (var pass = 0; pass < 5; pass++)
         {
             DeleteZeroByteArchives(dir);
+            DeleteZeroByteMediaFiles(dir);
             var archives = Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories)
                 .Where(IsArchiveStart)
                 .Where(f => new FileInfo(f).Length > 0)
@@ -1808,6 +1838,7 @@ internal sealed class Downloader
                 foreach (var password in Passwords(passwords))
                 {
                     DeleteZeroByteArchives(dir);
+                    DeleteZeroByteMediaFiles(dir);
                     var args = new List<string> { "x", "-y", "-aoa", "-o.", inputName, "-p" + password };
                     if (await Proc(settings.SevenZipPath, args, dir, ct, true) == 0) { ok = true; break; }
                 }
@@ -1822,14 +1853,20 @@ internal sealed class Downloader
         }
         MoveSingleFolderUp(dir);
         DeleteZeroByteArchives(dir);
+        DeleteZeroByteMediaFiles(dir);
     }
 
     private IEnumerable<string> Passwords(string value)
     {
         var list = new List<string>();
-        foreach (var p in (value ?? "").Split(["或", "|", "/", ";", ",", "，"], StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim().Trim('】', ']', '：', ':')).Where(x => x.Length > 0))
+        foreach (var p in (value ?? "").Split(["或", "|", "/", ";", ",", "，"], StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim().Trim('】', ']', '：', ':')).Where(x => x.Length > 0 && !x.Equals("教程", StringComparison.OrdinalIgnoreCase) && !x.Equals("说明", StringComparison.OrdinalIgnoreCase)))
             if (!list.Contains(p, StringComparer.OrdinalIgnoreCase)) list.Add(p);
-        foreach (var p in new[] { "www.sosiba.vip", "sosiba.vip", "taotudao.com", "www.taotudao.com" })
+        foreach (var p in new[]
+                 {
+                     "shenye001.com", "www.shenye001.com",
+                     "www.sosiba.vip", "sosiba.vip",
+                     "taotudao.com", "www.taotudao.com"
+                 })
             if (!list.Contains(p, StringComparer.OrdinalIgnoreCase)) list.Add(p);
         return list;
     }
@@ -1883,6 +1920,14 @@ internal sealed class Downloader
     private void DeleteZeroByteArchives(string dir)
     {
         foreach (var f in EnumerateUserFiles(dir).Where(IsArchive).Where(f => new FileInfo(f).Length == 0))
+            Try(() => File.Delete(f));
+    }
+
+    private void DeleteZeroByteMediaFiles(string dir)
+    {
+        foreach (var f in EnumerateUserFiles(dir)
+                     .Where(IsConfiguredMediaExtension)
+                     .Where(f => !MediaFileValidator.HasContent(f)))
             Try(() => File.Delete(f));
     }
 
@@ -1977,7 +2022,10 @@ internal sealed class Downloader
     private bool HasIncompleteDownloads(string dir) => GetIncompleteDownloadFiles(dir).Count > 0;
 
     private bool HasMedia(string dir) => Directory.Exists(dir) &&
-        EnumerateUserFiles(dir).Any(f => !File.Exists(f + ".BaiduPCS-Go-downloading") && IsMediaFile(f));
+        EnumerateUserFiles(dir).Any(f =>
+            !File.Exists(f + ".BaiduPCS-Go-downloading") &&
+            MediaFileValidator.HasContent(f) &&
+            IsMediaFile(f));
     private bool HasArchives(string dir) => Directory.Exists(dir) && EnumerateUserFiles(dir).Any(IsArchive);
 
     private string RemoteItemDir(ResourceItem item, string workTitle)
@@ -1999,12 +2047,20 @@ internal sealed class Downloader
 
     private bool IsMediaFile(string f)
     {
+        if (!MediaFileValidator.HasContent(f)) return false;
         var ext = Path.GetExtension(f);
         if (string.IsNullOrWhiteSpace(ext))
             return GuessExtension(f) is ".mp4" or ".jpg" or ".png" or ".webp" or ".gif";
         if (settings.ImageExts.Contains(ext, StringComparer.OrdinalIgnoreCase)) return true;
         if (settings.VideoExts.Contains(ext, StringComparer.OrdinalIgnoreCase)) return IsValidVideoFile(f);
         return false;
+    }
+
+    private bool IsConfiguredMediaExtension(string f)
+    {
+        var ext = Path.GetExtension(f);
+        return settings.ImageExts.Contains(ext, StringComparer.OrdinalIgnoreCase) ||
+               settings.VideoExts.Contains(ext, StringComparer.OrdinalIgnoreCase);
     }
 
     private bool IsVideoFile(string f) => settings.VideoExts.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase);
@@ -3163,7 +3219,9 @@ internal sealed class MainForm : Form
         Process.Start(new ProcessStartInfo("explorer.exe", "\"" + dir + "\"") { UseShellExecute = true });
     }
 
-    private bool IsImageForStats(string f) => settings.ImageExts.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase);
+    private bool IsImageForStats(string f) =>
+        MediaFileValidator.HasContent(f) &&
+        settings.ImageExts.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase);
 
     private bool IsValidVideoForStats(string f)
     {

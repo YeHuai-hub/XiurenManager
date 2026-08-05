@@ -355,9 +355,30 @@ public partial class RecommendationPage : Page
         e.Handled = true;
     }
 
-    private static bool IsEligible(LocalStat item) =>
-        Directory.Exists(item.LocalDir) &&
-        item.ImageCount + item.VideoCount + item.InvalidVideoCount > 0;
+    private bool IsEligible(LocalStat item)
+    {
+        if (!Directory.Exists(item.LocalDir) ||
+            item.ImageCount + item.VideoCount + item.InvalidVideoCount <= 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            var extensions = state.Settings.ImageExts
+                .Concat(state.Settings.VideoExts)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return Directory.EnumerateFiles(item.LocalDir, "*", SearchOption.AllDirectories)
+                .Any(path =>
+                    !AppPaths.IsInsideTool(path) &&
+                    MediaFileValidator.HasContent(path) &&
+                    extensions.Contains(Path.GetExtension(path)));
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     private static bool SameSet(LocalStat left, LocalStat right) =>
         Path.GetFullPath(left.LocalDir)

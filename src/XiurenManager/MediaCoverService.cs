@@ -102,6 +102,7 @@ internal static class MediaCoverService
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             return Directory.EnumerateFiles(item.LocalDir, "*", SearchOption.AllDirectories)
                 .Where(path => !AppPaths.IsInsideTool(path))
+                .Where(MediaFileValidator.HasContent)
                 .Where(path => extensions.Contains(Path.GetExtension(path)))
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                 .Take(Math.Max(0, count))
@@ -180,6 +181,8 @@ internal static class MediaCoverService
             if ((checkedFiles++ & 31) == 0)
                 token.ThrowIfCancellationRequested();
             var extension = Path.GetExtension(file);
+            if (!MediaFileValidator.HasContent(file))
+                continue;
             if (imageExts.Contains(extension))
                 return (file, firstVideo);
             if (firstVideo == null && videoExts.Contains(extension))
