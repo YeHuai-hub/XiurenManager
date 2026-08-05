@@ -214,7 +214,10 @@ public partial class RecommendationPage : Page
             .OrderBy(item => item.Model)
             .ThenBy(item => item.Title)
             .ToArray();
-        new ViewerWindow(recommendation, context)
+        new ViewerWindow(
+            recommendation,
+            context,
+            ViewerSetNavigationMode.Random)
         {
             Owner = Window.GetWindow(this)
         }.ShowDialog();

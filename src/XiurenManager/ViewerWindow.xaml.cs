@@ -16,11 +16,18 @@ public sealed class ViewerMediaRow
     public string Type => IsVideo ? "视频" : "图片";
 }
 
+internal enum ViewerSetNavigationMode
+{
+    Sequential,
+    Random
+}
+
 public partial class ViewerWindow : FluentWindow
 {
     private readonly AppState state = App.State;
     private LocalStat set;
     private readonly IReadOnlyList<LocalStat> setContext;
+    private readonly ViewerSetNavigationMode setNavigationMode;
     private int setIndex;
     private readonly ObservableCollection<ViewerMediaRow> media = [];
     private readonly ObservableCollection<string> tags = [];
@@ -34,7 +41,10 @@ public partial class ViewerWindow : FluentWindow
     private bool initialSetLoaded;
     private int imageLoadVersion;
 
-    internal ViewerWindow(LocalStat set, IReadOnlyList<LocalStat>? context = null)
+    internal ViewerWindow(
+        LocalStat set,
+        IReadOnlyList<LocalStat>? context = null,
+        ViewerSetNavigationMode navigationMode = ViewerSetNavigationMode.Sequential)
     {
         var availableSets = (context ?? [set])
             .Where(item => Directory.Exists(item.LocalDir))
@@ -47,6 +57,7 @@ public partial class ViewerWindow : FluentWindow
             setIndex = 0;
         }
         setContext = availableSets;
+        setNavigationMode = navigationMode;
         this.set = setContext[setIndex];
 
         InitializeComponent();
@@ -238,12 +249,39 @@ public partial class ViewerWindow : FluentWindow
 
     private bool TrySwitchSet(int delta, bool selectLast)
     {
+        if (setNavigationMode == ViewerSetNavigationMode.Random && delta > 0)
+            return TrySwitchToRandomSet();
+
         for (var index = setIndex + delta; index >= 0 && index < setContext.Count; index += delta)
         {
             if (!HasMedia(setContext[index]))
                 continue;
             setIndex = index;
             LoadSet(setContext[setIndex], selectLast);
+            return true;
+        }
+        return false;
+    }
+
+    private bool TrySwitchToRandomSet()
+    {
+        if (setContext.Count < 2)
+            return false;
+
+        var candidates = Enumerable.Range(0, setContext.Count)
+            .Where(index => index != setIndex)
+            .ToList();
+        while (candidates.Count > 0)
+        {
+            var position = Random.Shared.Next(candidates.Count);
+            var candidateIndex = candidates[position];
+            candidates[position] = candidates[^1];
+            candidates.RemoveAt(candidates.Count - 1);
+            if (!HasMedia(setContext[candidateIndex]))
+                continue;
+
+            setIndex = candidateIndex;
+            LoadSet(setContext[setIndex], selectLast: false);
             return true;
         }
         return false;
@@ -310,6 +348,21 @@ public partial class ViewerWindow : FluentWindow
         if (AutoPlayToggle?.IsChecked != true || media.Count == 0) return;
 
         var current = Math.Max(0, Filmstrip.SelectedIndex);
+        if (setNavigationMode == ViewerSetNavigationMode.Random)
+        {
+            for (var next = current + 1; next < media.Count; next++)
+            {
+                if (media[next].IsVideo) continue;
+                Filmstrip.SelectedIndex = next;
+                Filmstrip.ScrollIntoView(Filmstrip.SelectedItem);
+                return;
+            }
+
+            if (!TrySwitchToRandomSet())
+                RestartSlideshow();
+            return;
+        }
+
         for (var offset = 1; offset <= media.Count; offset++)
         {
             var next = (current + offset) % media.Count;
