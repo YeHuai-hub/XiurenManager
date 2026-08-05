@@ -57,6 +57,8 @@ function New-MigrationState {
         LastRunAt = ""
         LastMoved = 0
         Remaining = 0
+        BlockedByTemporary = 0
+        TooRecent = 0
         LastError = ""
     }
 }
@@ -76,6 +78,8 @@ function Load-State {
             LastRunAt = [string]$value.LastRunAt
             LastMoved = [int]$value.LastMoved
             Remaining = [int]$value.Remaining
+            BlockedByTemporary = [int]$value.BlockedByTemporary
+            TooRecent = [int]$value.TooRecent
             LastError = [string]$value.LastError
         }
     }
@@ -165,14 +169,18 @@ try {
 
     $moved = 0
     $conflicts = 0
+    $blockedByTemporary = 0
+    $tooRecent = 0
     foreach ($entry in $allSets) {
         if ($moved -ge [Math]::Max(1, $BatchSize)) {
             break
         }
         if ($entry.Set.LastWriteTime -gt $cutoff) {
+            $tooRecent++
             continue
         }
         if (Has-TemporaryFile $entry.Set.FullName) {
+            $blockedByTemporary++
             continue
         }
 
@@ -211,6 +219,9 @@ try {
     elseif ($remaining -eq 0) {
         $state.Status = "Completed"
     }
+    elseif ($moved -eq 0 -and $blockedByTemporary -eq $remaining) {
+        $state.Status = "WaitingForDownloads"
+    }
     else {
         $state.Status = "Running"
     }
@@ -221,13 +232,15 @@ try {
     $state.LastRunAt = (Get-Date).ToString("s")
     $state.LastMoved = $actualMoved
     $state.Remaining = $remaining
+    $state.BlockedByTemporary = $blockedByTemporary
+    $state.TooRecent = $tooRecent
     $state.LastError = ""
     Save-State $state
     if ($DryRun) {
         Write-MigrationLog "Dry run complete: candidates=$moved conflicts=$conflicts remaining=$remaining"
     }
     else {
-        Write-MigrationLog "Batch complete: moved=$moved conflicts=$conflicts remaining=$remaining"
+        Write-MigrationLog "Batch complete: moved=$moved conflicts=$conflicts blocked-temp=$blockedByTemporary too-recent=$tooRecent remaining=$remaining status=$($state.Status)"
     }
 }
 catch {

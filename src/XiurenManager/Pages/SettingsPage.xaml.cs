@@ -60,8 +60,6 @@ public partial class SettingsPage : Page
         Password.Password = settings.Password;
         CategoryPath.Text = settings.CategoryPath;
         DownloadRoot.Text = settings.DownloadRoot;
-        DownloadCategory.ItemsSource = LibraryPaths.Categories(settings);
-        DownloadCategory.Text = settings.DownloadCategory;
         BaiduPcs.Text = settings.BaiduPcsPath;
         SevenZip.Text = settings.SevenZipPath;
         Ffprobe.Text = settings.FfprobePath;
@@ -83,7 +81,7 @@ public partial class SettingsPage : Page
         if (state.Queue.IsRunning)
         {
             MessageBox.Show(
-                "请先停止当前下载任务，再修改资源库路径或下载分类。",
+                "请先停止当前下载任务，再修改资源库路径或下载设置。",
                 "任务正在运行");
             return;
         }
@@ -115,11 +113,6 @@ public partial class SettingsPage : Page
         settings.Password = Password.Password;
         settings.CategoryPath = string.IsNullOrWhiteSpace(CategoryPath.Text) ? "/tbgx" : CategoryPath.Text.Trim();
         settings.DownloadRoot = libraryRoot;
-        settings.DownloadCategory = LibraryPaths.NormalizeCategory(DownloadCategory.Text);
-        settings.LibraryCategories = settings.LibraryCategories
-            .Append(settings.DownloadCategory)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
         settings.BaiduPcsPath = BaiduPcs.Text.Trim();
         settings.SevenZipPath = SevenZip.Text.Trim();
         settings.FfprobePath = Ffprobe.Text.Trim();

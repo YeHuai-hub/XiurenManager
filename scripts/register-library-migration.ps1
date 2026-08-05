@@ -13,7 +13,10 @@ if (!(Test-Path -LiteralPath $migrationScript)) {
 }
 
 $arguments = @(
+    "-NoLogo",
     "-NoProfile",
+    "-NonInteractive",
+    "-WindowStyle Hidden",
     "-ExecutionPolicy Bypass",
     "-File `"$migrationScript`"",
     "-BatchSize $([Math]::Max(1, $BatchSize))",
@@ -30,7 +33,7 @@ $trigger = New-ScheduledTaskTrigger `
     -RepetitionInterval (New-TimeSpan -Minutes ([Math]::Max(1, $IntervalMinutes)))
 $principal = New-ScheduledTaskPrincipal `
     -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) `
-    -LogonType Interactive `
+    -LogonType S4U `
     -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `

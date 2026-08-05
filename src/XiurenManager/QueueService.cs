@@ -85,8 +85,34 @@ internal sealed class QueueService
         }
         else if (!database.Jobs.Any(IsQueued))
         {
-            state.WriteLog("没有可继续的任务。");
-            return;
+            var categories = database.Resources
+                .Where(x => x.Status.Equals("Ready", StringComparison.OrdinalIgnoreCase) &&
+                            !x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase) &&
+                            !string.IsNullOrWhiteSpace(x.PanUrl) &&
+                            HasIncompleteLocalDownload(x))
+                .Select(x => LibraryPaths.NormalizeCategory(x.Category))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (categories.Count == 0)
+            {
+                state.WriteLog("没有可继续的任务。");
+                return;
+            }
+
+            foreach (var category in categories)
+            {
+                database.Jobs.Insert(0, new JobItem
+                {
+                    Type = "ResumeIncomplete",
+                    Target = "本地未完成下载",
+                    DownloadCategory = category,
+                    Status = "Queued",
+                    StartedAt = DateTime.Now.ToString("s")
+                });
+            }
+            database.Save();
+            state.WriteLog($"已从资源记录恢复本地续传队列：{categories.Count} 个分类。");
+            state.NotifyJobsChanged();
         }
 
         await Task.Run(RunAsync);
@@ -167,14 +193,28 @@ internal sealed class QueueService
 
         if (job.Type == "DownloadReady")
         {
-            var category = LibraryPaths.NormalizeCategory(job.DownloadCategory);
-            RepairMissingCompleted(categoryFilter: category);
+            RepairMissingCompleted();
             var resources = state.Database.Resources.Where(x =>
-                    x.Category.Equals(category, StringComparison.OrdinalIgnoreCase) &&
                     x.Status.Equals("Ready", StringComparison.OrdinalIgnoreCase) &&
                     !x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase))
                 .ToList();
-            state.WriteLog($"下载“{category}”分类就绪未完成项: {resources.Count} 条");
+            state.WriteLog($"下载全部分类就绪未完成项: {resources.Count} 条");
+            await new Downloader(state.Settings, state.Database, Progress()).RunAsync(resources, token);
+            await ScanAsync(token);
+            return;
+        }
+
+        if (job.Type == "ResumeIncomplete")
+        {
+            var category = LibraryPaths.NormalizeCategory(job.DownloadCategory);
+            var resources = state.Database.Resources.Where(x =>
+                    x.Category.Equals(category, StringComparison.OrdinalIgnoreCase) &&
+                    x.Status.Equals("Ready", StringComparison.OrdinalIgnoreCase) &&
+                    !x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(x.PanUrl) &&
+                    HasIncompleteLocalDownload(x))
+                .ToList();
+            state.WriteLog($"续传“{category}”分类本地未完成项：{resources.Count} 条。");
             await new Downloader(state.Settings, state.Database, Progress()).RunAsync(resources, token);
             await ScanAsync(token);
             return;
@@ -204,7 +244,6 @@ internal sealed class QueueService
         var settings = state.Settings.Snapshot();
         settings.SearchMode = string.IsNullOrWhiteSpace(job.SearchMode) ? settings.SearchMode : job.SearchMode;
         settings.CategoryPath = string.IsNullOrWhiteSpace(job.CategoryPath) ? settings.CategoryPath : job.CategoryPath;
-        settings.DownloadCategory = LibraryPaths.NormalizeCategory(job.DownloadCategory);
 
         var canonicalModel = XiurenClient.Safe(job.Target.Trim());
         var merged = new Dictionary<string, ResourceItem>(StringComparer.OrdinalIgnoreCase);
@@ -217,7 +256,6 @@ internal sealed class QueueService
             if (saved != null)
             {
                 saved.Model = canonicalModel;
-                saved.Category = LibraryPaths.NormalizeCategory(job.DownloadCategory);
             }
             return saved;
         }
@@ -235,28 +273,43 @@ internal sealed class QueueService
                 Progress(),
                 token,
                 FindSaved,
-                item => SaveResource(item, canonicalModel, job.DownloadCategory));
+                item => SaveResource(item, canonicalModel));
 
             foreach (var item in found)
             {
-                var stored = SaveResource(item, canonicalModel, job.DownloadCategory);
+                var stored = SaveResource(item, canonicalModel);
                 merged[stored.DetailUrl] = stored;
             }
             state.Database.Save();
             state.NotifyJobsChanged();
         }
+        var modelCategory = ApplyModelCategory(canonicalModel, merged.Values);
+        state.WriteLog($"模特统一分类: {canonicalModel} → {modelCategory}（{merged.Count} 条）");
+        state.Database.Save();
         return merged.Values.ToList();
     }
 
-    private ResourceItem SaveResource(ResourceItem item, string model, string category)
+    private ResourceItem SaveResource(ResourceItem item, string model)
     {
         item.Model = model;
-        item.Category = LibraryPaths.NormalizeCategory(category);
+        if (!item.CategorySource.Equals(SiteCategoryClassifier.WebsiteSource, StringComparison.OrdinalIgnoreCase))
+        {
+            item.Category = LibraryPaths.DefaultCategory;
+            item.CategorySource = SiteCategoryClassifier.DefaultSource;
+            item.DetectedCategory = "";
+        }
         var stored = state.Database.Upsert(item);
         stored.Model = model;
         stored.Category = item.Category;
+        stored.CategorySource = item.CategorySource;
+        stored.DetectedCategory = item.DetectedCategory;
         state.Database.Save();
         return stored;
+    }
+
+    private string ApplyModelCategory(string model, IEnumerable<ResourceItem> currentItems)
+    {
+        return ModelCategoryUnifier.ReconcileModel(state, model, currentItems);
     }
 
     private void RepairMissingCompleted(
@@ -298,6 +351,29 @@ internal sealed class QueueService
             x.Status.Equals("Ready", StringComparison.OrdinalIgnoreCase) &&
             !x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase) &&
             !string.IsNullOrWhiteSpace(x.PanUrl));
+    }
+
+    private static bool HasIncompleteLocalDownload(ResourceItem item)
+    {
+        const string markerSuffix = ".BaiduPCS-Go-downloading";
+        if (string.IsNullOrWhiteSpace(item.LocalDir) || !Directory.Exists(item.LocalDir))
+            return false;
+        try
+        {
+            return Directory.EnumerateFiles(
+                    item.LocalDir,
+                    "*" + markerSuffix,
+                    SearchOption.AllDirectories)
+                .Any(marker =>
+                {
+                    var partial = marker[..^markerSuffix.Length];
+                    return File.Exists(partial) && new FileInfo(partial).Length > 0;
+                });
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private bool HasUsableLocalMedia(ResourceItem item)
@@ -343,6 +419,7 @@ internal sealed class QueueService
         "SearchDownload" => "搜索并下载 - " + job.Target,
         "DownloadReady" => "下载就绪项",
         "DownloadModelReady" => "恢复未完成下载 - " + job.Target,
+        "ResumeIncomplete" => "续传本地未完成下载",
         _ => job.Type + " - " + job.Target
     };
 }

@@ -23,6 +23,7 @@ public partial class MainWindow : FluentWindow
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
+        ModelCategoryUnifier.ReconcileSplitModels(App.State, notify: false);
         LibraryLocationReconciler.Reconcile(App.State, notify: false);
         UpdateMigrationStateTimestamp();
         migrationSyncTimer.Start();

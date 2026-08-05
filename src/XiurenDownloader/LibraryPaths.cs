@@ -3,6 +3,8 @@ namespace XiurenDownloader;
 internal static class LibraryPaths
 {
     public const string DefaultCategory = "秀人";
+    public const string CosCategory = "COS";
+    public const string WeemeCategory = "微密圈";
 
     public static string NormalizeCategory(string? category)
     {
@@ -38,10 +40,6 @@ internal static class LibraryPaths
 
     public static IReadOnlyList<string> Categories(Settings settings)
     {
-        return settings.LibraryCategories
-            .Append(settings.DownloadCategory)
-            .Select(NormalizeCategory)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        return [DefaultCategory, CosCategory, WeemeCategory];
     }
 }

@@ -646,7 +646,8 @@ internal sealed class Settings
             }
         }
         if (string.IsNullOrWhiteSpace(DownloadRoot)) DownloadRoot = AppPaths.LibraryRoot;
-        DownloadCategory = LibraryPaths.NormalizeCategory(DownloadCategory);
+        DownloadCategory = LibraryPaths.DefaultCategory;
+        LibraryCategories = LibraryPaths.Categories(this).ToArray();
         LibraryCategories = (LibraryCategories ?? [])
             .Append(DownloadCategory)
             .Select(LibraryPaths.NormalizeCategory)
@@ -682,7 +683,11 @@ internal sealed class Database
             File.ReadAllText(AppPaths.DbFile, Encoding.UTF8),
             Settings.JsonOptions) ?? new Database();
         foreach (var item in database.Resources)
+        {
             item.Category = LibraryPaths.NormalizeCategory(item.Category);
+            if (!string.IsNullOrWhiteSpace(item.DetectedCategory))
+                item.DetectedCategory = LibraryPaths.NormalizeCategory(item.DetectedCategory);
+        }
         foreach (var job in database.Jobs)
             job.DownloadCategory = LibraryPaths.NormalizeCategory(job.DownloadCategory);
         foreach (var item in database.LocalFiles)
@@ -711,6 +716,8 @@ internal sealed class Database
         old.Title = item.Title;
         old.Model = item.Model;
         old.Category = LibraryPaths.NormalizeCategory(item.Category);
+        old.CategorySource = item.CategorySource;
+        old.DetectedCategory = item.DetectedCategory;
         old.PanUrl = item.PanUrl;
         old.PanPassword = item.PanPassword;
         old.ExtractPassword = item.ExtractPassword;
@@ -727,6 +734,8 @@ internal sealed class ResourceItem
     public string Title { get; set; } = "";
     public string Model { get; set; } = "";
     public string Category { get; set; } = LibraryPaths.DefaultCategory;
+    public string CategorySource { get; set; } = "";
+    public string DetectedCategory { get; set; } = "";
     public string DetailUrl { get; set; } = "";
     public string PanUrl { get; set; } = "";
     public string PanPassword { get; set; } = "";
@@ -890,6 +899,8 @@ internal sealed class XiurenClient
             var saved = findSaved?.Invoke(post.url);
             if (saved != null && !string.IsNullOrWhiteSpace(saved.PanUrl))
             {
+                if (await EnsureWebsiteCategoryAsync(saved, log, ct))
+                    saveReady?.Invoke(saved);
                 log.Report("使用已入库链接: " + saved.Title);
                 ready.Add(saved);
                 if (maxReady > 0 && ready.Count >= maxReady) break;
@@ -927,6 +938,35 @@ internal sealed class XiurenClient
     {
         await LoginAsync(ct);
         return await ReadDetailAsync(item.Title, item.DetailUrl, ct);
+    }
+
+    private async Task<bool> EnsureWebsiteCategoryAsync(
+        ResourceItem item,
+        IProgress<string> log,
+        CancellationToken ct)
+    {
+        if (item.CategorySource.Equals(SiteCategoryClassifier.WebsiteSource, StringComparison.OrdinalIgnoreCase) ||
+            item.CategorySource.Equals(SiteCategoryClassifier.DefaultSource, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        try
+        {
+            var html = await GetStringWithContextAsync(item.DetailUrl, "识别已入库资源分类", ct);
+            var detection = SiteCategoryClassifier.Detect(html);
+            item.Category = detection.Category;
+            item.CategorySource = detection.IsDetected
+                ? SiteCategoryClassifier.WebsiteSource
+                : SiteCategoryClassifier.DefaultSource;
+            item.DetectedCategory = detection.IsDetected ? detection.Category : "";
+            item.LastChecked = DateTime.Now.ToString("s");
+            ReportResolvedCategory(log, item.Title, detection);
+            return true;
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            log.Report("已入库资源分类识别失败，保留原分类: " + item.Title + " | " + ex.Message);
+            return false;
+        }
     }
 
     private async Task LoginAsync(CancellationToken ct)
@@ -1014,6 +1054,8 @@ internal sealed class XiurenClient
         var text = WebUtility.HtmlDecode(Regex.Replace(html, "<.*?>", " "));
         var h1 = Regex.Match(html, "<h1[^>]*>(.*?)</h1>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
         var title = h1.Success ? Clean(h1.Groups[1].Value) : fallbackTitle;
+        var category = SiteCategoryClassifier.Detect(html);
+        ReportResolvedCategory(networkLog, title, category);
         var postId = Regex.Match(url, @"/(\d+)\.html").Groups[1].Value;
         var pan = ExtractPanUrl(html);
         if (string.IsNullOrWhiteSpace(pan) && !string.IsNullOrWhiteSpace(postId))
@@ -1027,7 +1069,10 @@ internal sealed class XiurenClient
             if (m.Success) pwd = m.Groups[1].Value;
         }
 
-        var extract = Regex.Match(text, @"解压(?:密码|码)?\s*[】\]\):：：]*\s*([A-Za-z0-9._-]+(?:\s*(?:或|/|\|)\s*[A-Za-z0-9._-]+)?)").Groups[1].Value;
+        var extract = Regex.Match(
+            text,
+            @"解压(?:密码|码)?\s*[】\]\):：]*\s*([^\s，。；;,<>()（）]+(?:\s*(?:或|/|\|)\s*[^\s，。；;,<>()（）]+)?)")
+            .Groups[1].Value;
         if (string.IsNullOrWhiteSpace(extract)) extract = "taotudao.com 或 www.taotudao.com";
 
         return new ResourceItem
@@ -1035,6 +1080,11 @@ internal sealed class XiurenClient
             PostId = postId,
             Title = title,
             Model = ModelName(title),
+            Category = category.Category,
+            CategorySource = category.IsDetected
+                ? SiteCategoryClassifier.WebsiteSource
+                : SiteCategoryClassifier.DefaultSource,
+            DetectedCategory = category.IsDetected ? category.Category : "",
             DetailUrl = url,
             PanUrl = pan,
             PanPassword = pwd,
@@ -1043,6 +1093,40 @@ internal sealed class XiurenClient
             Status = string.IsNullOrWhiteSpace(pan) ? "MissingPan" : "Ready",
             LastChecked = DateTime.Now.ToString("s")
         };
+    }
+
+    private static void ReportResolvedCategory(
+        IProgress<string>? log,
+        string title,
+        SiteCategoryDetection detection)
+    {
+        if (detection.IsDetected)
+        {
+            log?.Report($"网站分类: {detection.Category} - {title}");
+            return;
+        }
+
+        var reason = detection.HasConflict
+            ? "详情页同时出现微密圈和 COS 标记"
+            : "详情页未匹配微密圈或 COS";
+        log?.Report($"{reason}，按规则归入{LibraryPaths.DefaultCategory}: {title}");
+    }
+
+    private static void ReportCategory(
+        IProgress<string>? log,
+        string title,
+        SiteCategoryDetection detection)
+    {
+        if (detection.IsDetected)
+        {
+            log?.Report($"网站分类: {detection.Category} - {title}");
+            return;
+        }
+
+        var reason = detection.HasConflict
+            ? "详情页出现冲突分类 " + string.Join("/", detection.Signals)
+            : "详情页没有受支持的分类标记";
+        log?.Report($"{reason}，使用未识别时分类 {detection.Category}: {title}");
     }
 
     private async Task<string> ResolvePanFromDownloadAsync(string raw, CancellationToken ct)
@@ -1400,7 +1484,8 @@ internal sealed class Downloader
     {
         var modelDir = LibraryPaths.ModelRoot(settings, item.Category, item.Model);
         var workTitle = canonicalTitle ?? item.Title;
-        var titleDir = Path.Combine(modelDir, XiurenClient.Safe(workTitle));
+        var defaultTitleDir = Path.Combine(modelDir, XiurenClient.Safe(workTitle));
+        var titleDir = ResolveWorkingTitleDir(item, defaultTitleDir);
         item.LocalDir = titleDir;
         Directory.CreateDirectory(modelDir);
 
@@ -1840,6 +1925,14 @@ internal sealed class Downloader
             .Where(f => new FileInfo(f).Length > 0)
             .OrderByDescending(f => new FileInfo(f).Length)
             .ToList();
+    }
+
+    private string ResolveWorkingTitleDir(ResourceItem item, string defaultTitleDir)
+    {
+        if (!string.IsNullOrWhiteSpace(item.LocalDir) &&
+            HasIncompleteDownloads(item.LocalDir))
+            return item.LocalDir;
+        return defaultTitleDir;
     }
 
     private bool HasIncompleteDownloads(string dir) => GetIncompleteDownloadFiles(dir).Count > 0;
@@ -2424,8 +2517,23 @@ internal sealed class MainForm : Form
         }
         else if (!db.Jobs.Any(x => x.Status.Equals("Queued", StringComparison.OrdinalIgnoreCase)))
         {
-            Log("没有可继续的任务。需要下载现有资源时，请点击“下载就绪项”。");
-            return;
+            var incomplete = IncompleteLocalResources().ToList();
+            if (incomplete.Count == 0)
+            {
+                Log("没有可继续的任务。需要下载现有资源时，请点击“下载就绪项”。");
+                return;
+            }
+
+            db.Jobs.Insert(0, new JobItem
+            {
+                Type = "ResumeIncomplete",
+                Target = "本地未完成下载",
+                Status = "Queued",
+                StartedAt = DateTime.Now.ToString("s")
+            });
+            db.Save();
+            RefreshGrids();
+            Log("已从资源记录恢复本地续传队列：" + incomplete.Count + " 条。");
         }
 
         await RunJobQueueAsync();
@@ -2464,6 +2572,14 @@ internal sealed class MainForm : Form
             Scan();
             return;
         }
+        if (job.Type == "ResumeIncomplete")
+        {
+            var items = IncompleteLocalResources().ToList();
+            Log("续传本地未完成项: " + items.Count + " 条");
+            await new Downloader(settings, db, Progress()).RunAsync(items, ct);
+            Scan();
+            return;
+        }
         throw new InvalidOperationException("未知任务类型: " + job.Type);
     }
 
@@ -2482,6 +2598,38 @@ internal sealed class MainForm : Form
         return db.Resources.Where(x =>
             x.Status.Equals("Ready", StringComparison.OrdinalIgnoreCase) &&
             !x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private IEnumerable<ResourceItem> IncompleteLocalResources()
+    {
+        return db.Resources.Where(x =>
+            x.Status.Equals("Ready", StringComparison.OrdinalIgnoreCase) &&
+            !x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(x.PanUrl) &&
+            HasIncompleteLocalDownload(x));
+    }
+
+    private static bool HasIncompleteLocalDownload(ResourceItem item)
+    {
+        const string markerSuffix = ".BaiduPCS-Go-downloading";
+        if (string.IsNullOrWhiteSpace(item.LocalDir) || !Directory.Exists(item.LocalDir))
+            return false;
+        try
+        {
+            return Directory.EnumerateFiles(
+                    item.LocalDir,
+                    "*" + markerSuffix,
+                    SearchOption.AllDirectories)
+                .Any(marker =>
+                {
+                    var partial = marker[..^markerSuffix.Length];
+                    return File.Exists(partial) && new FileInfo(partial).Length > 0;
+                });
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private int RepairMissingCompletedResources(string? modelFilter = null)
@@ -2587,6 +2735,20 @@ internal sealed class MainForm : Form
             Log($"名称“{searchName}”合并后共有 {merged.Count} 条有效链接");
         }
 
+        var modelItems = db.Resources
+            .Where(x => x.Model.Equals(model, StringComparison.OrdinalIgnoreCase))
+            .Concat(merged.Values)
+            .DistinctBy(x => x.DetailUrl, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var modelCategory = SiteCategoryClassifier.ResolveModelCategory(modelItems);
+        foreach (var item in modelItems)
+        {
+            var detected = SiteCategoryClassifier.DetectedSpecialCategory(item);
+            if (!string.IsNullOrWhiteSpace(detected))
+                item.DetectedCategory = detected;
+            item.Category = modelCategory;
+        }
+        Log($"模特统一分类: {model} → {modelCategory}（{merged.Count} 条）");
         db.Save();
         RefreshGrids();
         return merged.Values.ToList();
@@ -2604,6 +2766,7 @@ internal sealed class MainForm : Form
         "SearchDownload" => "搜索并下载 - " + SearchLabel(job),
         "DownloadReady" => "下载就绪项",
         "DownloadModelReady" => "下载未完成 - " + job.Target,
+        "ResumeIncomplete" => "续传本地未完成下载",
         _ => job.Type + " - " + job.Target
     };
 

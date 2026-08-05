@@ -76,14 +76,11 @@
                 <TextBlock Text="资源库根目录" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
                 <ui:TextBox x:Name="DownloadRoot" Grid.Column="1" />
                 <TextBlock Grid.Column="3"
-                           Text="新下载分类"
+                           Grid.ColumnSpan="2"
+                           Text="分类固定为秀人 / COS / 微密圈；同一模特始终归入同一分类"
+                           TextWrapping="Wrap"
                            VerticalAlignment="Center"
-                           Foreground="{StaticResource PrimaryTextBrush}" />
-                <ComboBox x:Name="DownloadCategory"
-                          Grid.Column="4"
-                          Height="34"
-                          IsEditable="True"
-                          VerticalContentAlignment="Center" />
+                           Foreground="{StaticResource SecondaryTextBrush}" />
                 <TextBlock Grid.Row="1" Text="BaiduPCS-Go" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
                 <ui:TextBox x:Name="BaiduPcs" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="4" />
                 <TextBlock Grid.Row="2" Text="7-Zip" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
