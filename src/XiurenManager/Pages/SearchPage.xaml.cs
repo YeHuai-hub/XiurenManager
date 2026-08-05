@@ -56,6 +56,7 @@ public partial class SearchPage : Page
             type,
             target,
             Aliases.Text,
+            Exclusions.Text,
             Number(PageCount.Text, 999, 1, 9999),
             Number(MaxReady.Text, 9999, 0, 999999));
         UpdateStatus();

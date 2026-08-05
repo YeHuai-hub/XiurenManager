@@ -49,6 +49,7 @@ internal static class Headless
             var pages = ParsePositiveInt(GetArgValue(args, "--pages"), 999);
             var maxReady = ParsePositiveInt(GetArgValue(args, "--max-ready"), 9999);
             var aliases = GetArgValue(args, "--aliases");
+            var exclusions = XiurenClient.ExclusionTerms(GetArgValue(args, "--exclude"));
             var settings = Settings.Load();
             var db = Database.Load();
             var model = XiurenClient.Safe(keyword);
@@ -81,7 +82,8 @@ internal static class Headless
                         var stored = db.Upsert(item);
                         stored.Model = model;
                         db.Save();
-                    });
+                    },
+                    exclusions);
 
                 foreach (var item in found)
                 {
@@ -754,6 +756,7 @@ internal sealed class JobItem
     public string Type { get; set; } = "";
     public string Target { get; set; } = "";
     public string Aliases { get; set; } = "";
+    public string Exclusions { get; set; } = "";
     public int Pages { get; set; } = 999;
     public int MaxReady { get; set; } = 9999;
     public string SearchMode { get; set; } = "Global";
@@ -865,7 +868,8 @@ internal sealed class XiurenClient
         IProgress<string> log,
         CancellationToken ct,
         Func<string, ResourceItem?>? findSaved = null,
-        Action<ResourceItem>? saveReady = null)
+        Action<ResourceItem>? saveReady = null,
+        IReadOnlyCollection<string>? exclusions = null)
     {
         networkLog = log;
         await LoginAsync(ct);
@@ -888,7 +892,16 @@ internal sealed class XiurenClient
             }
             var found = ParsePosts(html);
             if (found.Count == 0) break;
-            foreach (var post in found) if (seen.Add(post.url)) posts.Add(post);
+            foreach (var post in found)
+            {
+                var excludedBy = MatchExclusion(post.title, exclusions);
+                if (!string.IsNullOrWhiteSpace(excludedBy))
+                {
+                    log.Report($"已按排除规则跳过: {post.title}（命中: {excludedBy}）");
+                    continue;
+                }
+                if (seen.Add(post.url)) posts.Add(post);
+            }
             await Task.Delay(500, ct);
         }
 
@@ -899,6 +912,12 @@ internal sealed class XiurenClient
             var saved = findSaved?.Invoke(post.url);
             if (saved != null && !string.IsNullOrWhiteSpace(saved.PanUrl))
             {
+                var excludedBy = MatchExclusion(saved.Title, exclusions);
+                if (!string.IsNullOrWhiteSpace(excludedBy))
+                {
+                    log.Report($"已按排除规则跳过已入库资源: {saved.Title}（命中: {excludedBy}）");
+                    continue;
+                }
                 if (await EnsureWebsiteCategoryAsync(saved, log, ct))
                     saveReady?.Invoke(saved);
                 log.Report("使用已入库链接: " + saved.Title);
@@ -923,6 +942,13 @@ internal sealed class XiurenClient
                     log.Report("连续 5 个详情读取失败，停止抓取并下载本轮已入库资源。");
                     break;
                 }
+                continue;
+            }
+
+            var detailExcludedBy = MatchExclusion(item.Title, exclusions);
+            if (!string.IsNullOrWhiteSpace(detailExcludedBy))
+            {
+                log.Report($"已按排除规则跳过详情: {item.Title}（命中: {detailExcludedBy}）");
                 continue;
             }
             if (string.IsNullOrWhiteSpace(item.PanUrl)) { log.Report("跳过无网盘链接资源: " + item.Title); continue; }
@@ -1284,11 +1310,24 @@ internal sealed class XiurenClient
     private static string Query(string url, string key) => Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Query.TrimStart('?').Split('&').Select(x => x.Split('=', 2)).Where(x => x.Length == 2 && x[0] == key).Select(x => Uri.UnescapeDataString(x[1])).FirstOrDefault() ?? "" : "";
     public static List<string> SearchNames(string canonicalName, string aliases) =>
         new[] { canonicalName }
-            .Concat((aliases ?? "").Split([',', '，', ';', '；', '|', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+            .Concat(SplitTerms(aliases))
             .Select(x => x.Trim())
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+    public static List<string> ExclusionTerms(string exclusions) =>
+        SplitTerms(exclusions)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    public static string MatchExclusion(string? value, IReadOnlyCollection<string>? exclusions) =>
+        exclusions?.FirstOrDefault(x =>
+            !string.IsNullOrWhiteSpace(x) &&
+            (value ?? "").Contains(x, StringComparison.OrdinalIgnoreCase)) ?? "";
+    private static IEnumerable<string> SplitTerms(string? value) =>
+        (value ?? "")
+            .Split([',', '，', ';', '；', '|', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(x => x.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x));
     public static string Safe(string name) { foreach (var c in Path.GetInvalidFileNameChars()) name = name.Replace(c, '_'); return name.Trim(); }
     public static string ModelName(string title)
     {

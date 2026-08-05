@@ -51,6 +51,7 @@
                 <DataGridTextColumn Header="任务" Binding="{Binding Label}" Width="230" />
                 <DataGridTextColumn Header="搜索名称" Binding="{Binding Target}" Width="150" />
                 <DataGridTextColumn Header="别名" Binding="{Binding Aliases}" Width="180" />
+                <DataGridTextColumn Header="排除项" Binding="{Binding Exclusions}" Width="180" />
                 <DataGridTextColumn Header="开始时间" Binding="{Binding StartedAt}" Width="145" />
                 <DataGridTextColumn Header="结束时间" Binding="{Binding FinishedAt}" Width="145" />
                 <DataGridTextColumn Header="错误" Binding="{Binding Error}" Width="*" />

@@ -29,6 +29,7 @@ internal sealed class QueueService
         string type,
         string target,
         string aliases = "",
+        string exclusions = "",
         int pages = 999,
         int maxReady = 9999)
     {
@@ -37,6 +38,7 @@ internal sealed class QueueService
             Type = type,
             Target = type == "DownloadReady" ? "全部就绪项" : target.Trim(),
             Aliases = aliases.Trim(),
+            Exclusions = exclusions.Trim(),
             Pages = Math.Max(1, pages),
             MaxReady = Math.Max(0, maxReady),
             SearchMode = state.Settings.SearchMode,
@@ -224,11 +226,13 @@ internal sealed class QueueService
         {
             RepairMissingCompleted(job.Target, job.DownloadCategory);
             var model = XiurenClient.Safe(job.Target.Trim());
+            var exclusions = XiurenClient.ExclusionTerms(job.Exclusions);
             var resources = state.Database.Resources.Where(x =>
                     x.Category.Equals(job.DownloadCategory, StringComparison.OrdinalIgnoreCase) &&
                     x.Model.Equals(model, StringComparison.OrdinalIgnoreCase) &&
                     x.Status.Equals("Ready", StringComparison.OrdinalIgnoreCase) &&
-                    !x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase))
+                    !x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase) &&
+                    string.IsNullOrWhiteSpace(XiurenClient.MatchExclusion(x.Title, exclusions)))
                 .ToList();
             state.WriteLog($"恢复“{model}”未完成下载: {resources.Count} 条");
             await new Downloader(state.Settings, state.Database, Progress()).RunAsync(resources, token);
@@ -247,6 +251,9 @@ internal sealed class QueueService
 
         var canonicalModel = XiurenClient.Safe(job.Target.Trim());
         var merged = new Dictionary<string, ResourceItem>(StringComparer.OrdinalIgnoreCase);
+        var exclusions = XiurenClient.ExclusionTerms(job.Exclusions);
+        if (exclusions.Count > 0)
+            state.WriteLog("本任务排除项: " + string.Join("、", exclusions));
 
         ResourceItem? FindSaved(string detailUrl)
         {
@@ -273,7 +280,8 @@ internal sealed class QueueService
                 Progress(),
                 token,
                 FindSaved,
-                item => SaveResource(item, canonicalModel));
+                item => SaveResource(item, canonicalModel),
+                exclusions);
 
             foreach (var item in found)
             {

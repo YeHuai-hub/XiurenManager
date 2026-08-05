@@ -12,6 +12,7 @@ internal sealed class TaskRow
     public string Label => QueueService.Label(Item);
     public string Target => Item.Target;
     public string Aliases => Item.Aliases;
+    public string Exclusions => Item.Exclusions;
     public string StartedAt => Item.StartedAt.Replace('T', ' ');
     public string FinishedAt => Item.FinishedAt.Replace('T', ' ');
     public string Error => Item.Error.Replace(Environment.NewLine, " | ");

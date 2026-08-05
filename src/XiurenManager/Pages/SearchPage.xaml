@@ -14,7 +14,7 @@
 
             <StackPanel>
                 <TextBlock Text="搜索下载" Style="{StaticResource PageTitleStyle}" />
-                <TextBlock Text="按主名称与任意数量的别名搜索，所有结果统一保存到主名称目录。"
+                <TextBlock Text="用主名称与别名扩大搜索，并用排除项剔除同名或名称相近的其他人物。"
                            Margin="1,6,0,0"
                            Style="{StaticResource SecondaryTextStyle}" />
             </StackPanel>
@@ -55,12 +55,24 @@
                 <ui:TextBox x:Name="Aliases"
                             Grid.Row="1"
                             Grid.Column="1"
-                            Grid.ColumnSpan="4"
                             Height="118"
                             AcceptsReturn="True"
                             TextWrapping="Wrap"
                             VerticalContentAlignment="Top"
                             PlaceholderText="一行一个，也可用逗号、分号或竖线分隔；数量不限" />
+
+                <TextBlock Grid.Row="1"
+                           Grid.Column="3"
+                           Text="排除项"
+                           Style="{StaticResource SectionTitleStyle}" />
+                <ui:TextBox x:Name="Exclusions"
+                            Grid.Row="1"
+                            Grid.Column="4"
+                            Height="118"
+                            AcceptsReturn="True"
+                            TextWrapping="Wrap"
+                            VerticalContentAlignment="Top"
+                            PlaceholderText="例如：诗诗KK；也可只填需要排除的关键词 KK" />
             </Grid>
 
             <Expander Grid.Row="2"
