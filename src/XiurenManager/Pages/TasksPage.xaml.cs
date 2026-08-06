@@ -72,15 +72,25 @@ public partial class TasksPage : Page
             return;
         }
         var selected = TaskGrid.SelectedItems.Cast<TaskRow>().Select(x => x.Item).ToList();
+        if (selected.Count == 0) return;
+        var resumable = selected.Count(x => !x.Status.Equals("Done", StringComparison.OrdinalIgnoreCase));
+        if (resumable > 0 && MessageBox.Show(
+                $"选中的任务中有 {resumable} 条尚未完成，删除后将无法从任务队列继续。确定删除吗？",
+                "删除未完成任务",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+            return;
         foreach (var item in selected) state.Database.Jobs.Remove(item);
         state.Database.Save();
         state.WriteLog($"已删除任务记录: {selected.Count}");
         state.NotifyJobsChanged();
     }
 
-    private void ClearEnded_OnClick(object sender, RoutedEventArgs e)
+    private void ClearCompleted_OnClick(object sender, RoutedEventArgs e)
     {
-        Clear(x => x.Status is "Done" or "Failed" or "Canceled");
+        Clear(
+            x => x.Status.Equals("Done", StringComparison.OrdinalIgnoreCase),
+            "已完成");
     }
 
     private void ClearAll_OnClick(object sender, RoutedEventArgs e)
@@ -90,14 +100,22 @@ public partial class TasksPage : Page
             MessageBox.Show("请先停止当前任务，再清空队列。");
             return;
         }
-        Clear(_ => true);
+        var unfinished = state.Database.Jobs.Count(x =>
+            !x.Status.Equals("Done", StringComparison.OrdinalIgnoreCase));
+        if (unfinished > 0 && MessageBox.Show(
+                $"队列中还有 {unfinished} 条等待、取消或失败的未完成任务。清空后将无法继续，确定清空全部吗？",
+                "清空全部任务",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+            return;
+        Clear(_ => true, "全部");
     }
 
-    private void Clear(Func<JobItem, bool> predicate)
+    private void Clear(Func<JobItem, bool> predicate, string label)
     {
         var count = state.Database.Jobs.RemoveAll(x => predicate(x));
         state.Database.Save();
-        state.WriteLog($"已清除任务记录: {count}");
+        state.WriteLog($"已清除{label}任务记录: {count}");
         state.NotifyJobsChanged();
     }
 }

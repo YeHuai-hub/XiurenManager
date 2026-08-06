@@ -27,8 +27,8 @@
                        Icon="{ui:SymbolIcon Delete24}"
                        Click="DeleteSelected_OnClick" />
             <ui:Button Margin="9,0,0,0"
-                       Content="清空已结束"
-                       Click="ClearEnded_OnClick" />
+                       Content="清空已完成"
+                       Click="ClearCompleted_OnClick" />
             <ui:Button Margin="9,0,0,0"
                        Content="清空全部"
                        Click="ClearAll_OnClick" />
