@@ -112,7 +112,7 @@ internal sealed class StorageMigrationService : IDisposable
             if (!Directory.Exists(settings.ArchiveRoot))
                 return SetIdle("NasOffline", "NAS 当前离线，迁移队列已保留。");
 
-            RecoverInterrupted(settings, token);
+            await RecoverInterruptedAsync(settings, token);
             if (state.Queue.IsRunning)
                 return SetIdle("WaitingForDownloads", "下载队列运行中，本轮暂不迁移。");
 
@@ -389,7 +389,7 @@ internal sealed class StorageMigrationService : IDisposable
         state.Favorites.UpdateModelLocations(model.Model, model.Directory, destination);
         UpdateStatus(LoadStatus() with { Phase = "DatabaseUpdated", Status = "CleaningSource" });
 
-        Directory.Delete(model.Directory, recursive: true);
+        DeleteVerifiedSource(model.Directory);
         RemoveEmptyParents(model.Directory, settings);
         UpdateStatus(LoadStatus() with
         {
@@ -403,7 +403,7 @@ internal sealed class StorageMigrationService : IDisposable
         WriteLog($"整模特迁移完成: {model.Model} ({FormatBytes(model.Bytes)})");
     }
 
-    private void RecoverInterrupted(Settings settings, CancellationToken token)
+    private async Task RecoverInterruptedAsync(Settings settings, CancellationToken token)
     {
         var status = LoadStatus();
         if (string.IsNullOrWhiteSpace(status.SourcePath) ||
@@ -413,7 +413,17 @@ internal sealed class StorageMigrationService : IDisposable
         if (Directory.Exists(status.DestinationPath) && Directory.Exists(status.SourcePath) &&
             status.Phase is "Verified" or "Finalized" or "DatabaseUpdated")
         {
-            VerifyTree(status.SourcePath, status.DestinationPath);
+            if (status.Phase == "DatabaseUpdated")
+            {
+                await VerifyRemainingSourceAsync(
+                    status.SourcePath,
+                    status.DestinationPath,
+                    token);
+            }
+            else
+            {
+                VerifyTree(status.SourcePath, status.DestinationPath);
+            }
             var model = Path.GetFileName(status.SourcePath);
             UpdateTrackedPaths(model, status.SourcePath, status.DestinationPath);
             state.Database.Save();
@@ -421,7 +431,7 @@ internal sealed class StorageMigrationService : IDisposable
             status = status with { Phase = "DatabaseUpdated", Status = "CleaningSource" };
             UpdateStatus(status);
             token.ThrowIfCancellationRequested();
-            Directory.Delete(status.SourcePath, recursive: true);
+            DeleteVerifiedSource(status.SourcePath);
             RemoveEmptyParents(status.SourcePath, settings);
             UpdateStatus(status with
             {
@@ -640,6 +650,50 @@ internal sealed class StorageMigrationService : IDisposable
         if (sourceFiles.Count != destinationFiles.Count ||
             sourceFiles.Any(x => !destinationFiles.TryGetValue(x.Key, out var length) || length != x.Value))
             throw new IOException("目录校验失败，源目录仍会保留: " + source);
+    }
+
+    private static async Task VerifyRemainingSourceAsync(
+        string source,
+        string destination,
+        CancellationToken token)
+    {
+        foreach (var sourceFile in Directory.EnumerateFiles(
+                     source,
+                     "*",
+                     SearchOption.AllDirectories))
+        {
+            token.ThrowIfCancellationRequested();
+            var relative = Path.GetRelativePath(source, sourceFile);
+            var destinationFile = Path.Combine(destination, relative);
+            if (!File.Exists(destinationFile) ||
+                new FileInfo(sourceFile).Length != new FileInfo(destinationFile).Length)
+            {
+                throw new IOException(
+                    "恢复清理校验失败，源目录仍会保留: " + sourceFile);
+            }
+
+            var sourceHash = await HashAsync(sourceFile, token);
+            var destinationHash = await HashAsync(destinationFile, token);
+            if (!CryptographicOperations.FixedTimeEquals(sourceHash, destinationHash))
+            {
+                throw new IOException(
+                    "恢复清理校验失败，文件内容不同，源目录仍会保留: " + sourceFile);
+            }
+        }
+    }
+
+    private static void DeleteVerifiedSource(string source)
+    {
+        foreach (var entry in Directory.EnumerateFileSystemEntries(
+                     source,
+                     "*",
+                     SearchOption.AllDirectories)
+                 .OrderByDescending(x => x.Length))
+        {
+            File.SetAttributes(entry, FileAttributes.Normal);
+        }
+        File.SetAttributes(source, FileAttributes.Normal);
+        Directory.Delete(source, recursive: true);
     }
 
     private static bool HasIncompleteFiles(string directory)

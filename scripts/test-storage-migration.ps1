@@ -116,6 +116,40 @@ finally {
     $env:XIUREN_DATA_ROOT = $oldDataRoot
 }
 
+$recoverySource = Join-Path $localRoot "TestCategory\RecoveryModel\SetC"
+$recoveryTarget = Join-Path $archiveRoot "TestCategory\RecoveryModel\SetC"
+[IO.Directory]::CreateDirectory($recoverySource) | Out-Null
+[IO.Directory]::CreateDirectory($recoveryTarget) | Out-Null
+[IO.File]::WriteAllText((Join-Path $recoverySource "remaining.jpg"), "verified-content")
+[IO.File]::WriteAllText((Join-Path $recoveryTarget "remaining.jpg"), "verified-content")
+[IO.File]::WriteAllText((Join-Path $recoveryTarget "already-removed.jpg"), "already-on-nas")
+[IO.File]::SetAttributes(
+    (Join-Path $recoverySource "remaining.jpg"),
+    [IO.FileAttributes]::ReadOnly)
+$recoveryState = [ordered]@{
+    Status = "CleaningSource"
+    Phase = "DatabaseUpdated"
+    CurrentModel = "RecoveryModel"
+    Direction = "LocalToNas"
+    SourcePath = Split-Path -Parent $recoverySource
+    DestinationPath = Split-Path -Parent $recoveryTarget
+    TempPath = ""
+}
+$recoveryState | ConvertTo-Json -Depth 10 |
+    Set-Content -LiteralPath (Join-Path $dataRoot "data\storage-migration-state.json") -Encoding UTF8
+
+$env:XIUREN_DATA_ROOT = $dataRoot
+try {
+    $recoveryProcess = Start-Process `
+        -FilePath $Executable `
+        -ArgumentList @("--migrate-storage-batch") `
+        -Wait `
+        -PassThru
+}
+finally {
+    $env:XIUREN_DATA_ROOT = $oldDataRoot
+}
+
 $env:XIUREN_DATA_ROOT = $dataRoot
 try {
     $blockedProcess = Start-Process `
@@ -153,6 +187,9 @@ $result = [ordered]@{
     DbTierUpdated = [string]$completeLocal.StorageTier -eq "NAS"
     ResourcePathUpdated = [string]$completeResource.LocalDir -eq $targetSet
     FavoritePathUpdated = [string]$completeFavorite.LocalDir -eq $targetSet
+    PartialCleanupRecovered = !(Test-Path -LiteralPath (Split-Path -Parent $recoverySource))
+    RecoveryTargetPreserved = (Test-Path -LiteralPath (Join-Path $recoveryTarget "remaining.jpg")) -and
+        (Test-Path -LiteralPath (Join-Path $recoveryTarget "already-removed.jpg"))
     BlockedSourcePreserved = Test-Path -LiteralPath $blockedSet
     BlockedTargetAbsent = !(Test-Path -LiteralPath (Join-Path $archiveRoot "TestCategory\BlockedModel"))
     BlockedMoveRejected = [string]$migrationState.Status -eq "Failed" -and
@@ -163,7 +200,8 @@ $result = [ordered]@{
 $failed = @($result.GetEnumerator() | Where-Object {
     $_.Key -notin @("ExitCode", "TargetFileCount", "TestRoot") -and !$_.Value
 })
-if ($process.ExitCode -ne 0 -or $blockedProcess.ExitCode -ne 0 -or
+if ($process.ExitCode -ne 0 -or $recoveryProcess.ExitCode -ne 0 -or
+    $blockedProcess.ExitCode -ne 0 -or
     $result.TargetFileCount -ne 2 -or $failed.Count -gt 0) {
     $result | ConvertTo-Json
     throw "Storage migration integration test failed."
