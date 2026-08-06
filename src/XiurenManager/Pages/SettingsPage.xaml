@@ -138,6 +138,7 @@
                     <RowDefinition Height="54" />
                     <RowDefinition Height="54" />
                     <RowDefinition Height="54" />
+                    <RowDefinition Height="48" />
                     <RowDefinition Height="72" />
                     <RowDefinition Height="54" />
                     <RowDefinition Height="64" />
@@ -158,12 +159,15 @@
 
                 <TextBlock Grid.Row="3" Text="自动检查间隔 分钟" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
                 <ui:TextBox x:Name="StorageCheckMinutes" Grid.Row="3" Grid.Column="1" Width="120" HorizontalAlignment="Left" />
-                <TextBlock Grid.Row="3" Grid.Column="3" Text="迁移单位" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
-                <TextBlock Grid.Row="3" Grid.Column="4" Text="整模特 · 不拆分套图" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" />
+                <TextBlock Grid.Row="3" Grid.Column="3" Text="迁移并发数" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
+                <ui:TextBox x:Name="MigrationParallelism" Grid.Row="3" Grid.Column="4" Width="120" HorizontalAlignment="Left" ToolTip="同一模特内部同时复制的文件数，建议 2-4" />
 
-                <TextBlock Grid.Row="4" Text="固定在本地的模特" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
+                <TextBlock Grid.Row="4" Text="迁移单位" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
+                <TextBlock Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="4" Text="整模特 · 仅文件并发 · 完整校验后整体提交" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" />
+
+                <TextBlock Grid.Row="5" Text="固定在本地的模特" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
                 <ui:TextBox x:Name="PinnedLocalModels"
-                            Grid.Row="4"
+                            Grid.Row="5"
                             Grid.Column="1"
                             Grid.ColumnSpan="4"
                             TextWrapping="Wrap"
@@ -171,13 +175,13 @@
                             ToolTip="多个名称用逗号、分号或换行分隔" />
 
                 <CheckBox x:Name="StorageManagementEnabled"
-                          Grid.Row="5"
+                          Grid.Row="6"
                           Grid.Column="1"
                           Grid.ColumnSpan="4"
                           Content="启用自动冷热分层（下载任务优先，NAS 离线时自动等待）"
                           Foreground="{StaticResource PrimaryTextBrush}" />
 
-                <ui:Button Grid.Row="6"
+                <ui:Button Grid.Row="7"
                            Grid.Column="1"
                            Margin="0,14,0,0"
                            VerticalAlignment="Top"

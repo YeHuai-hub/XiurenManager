@@ -382,21 +382,18 @@ internal sealed class StorageMigrationService : IDisposable
         WriteLog($"开始整模特迁移: {model.Model} | {model.Directory} -> {destination}");
 
         var completedFiles = 0;
-        long completedBytes = 0;
+        long transferredBytes = 0;
+        var progressLock = new object();
         var lastProgressAt = DateTime.MinValue;
-        foreach (var sourceFile in sourceFiles)
+
+        void ReportProgress(long delta, bool fileCompleted = false)
         {
-            token.ThrowIfCancellationRequested();
-            var fileLength = new FileInfo(sourceFile).Length;
-            long currentFileBytes = 0;
-            var relative = Path.GetRelativePath(model.Directory, sourceFile);
-            var targetFile = Path.Combine(temp, relative);
-            Directory.CreateDirectory(Path.GetDirectoryName(targetFile)!);
-            await CopyAndVerifyAsync(sourceFile, targetFile, token, delta =>
+            lock (progressLock)
             {
-                currentFileBytes += delta;
+                transferredBytes += delta;
+                if (fileCompleted) completedFiles++;
                 if (DateTime.UtcNow - lastProgressAt < TimeSpan.FromSeconds(2) &&
-                    completedBytes + currentFileBytes < totalBytes)
+                    transferredBytes < totalBytes)
                     return;
                 lastProgressAt = DateTime.UtcNow;
                 UpdateStatus(LoadStatus() with
@@ -405,19 +402,37 @@ internal sealed class StorageMigrationService : IDisposable
                     Phase = "Copying",
                     CurrentFiles = completedFiles,
                     TotalFiles = sourceFiles.Length,
-                    CurrentBytes = Math.Min(totalBytes, completedBytes + currentFileBytes),
+                    CurrentBytes = Math.Min(totalBytes, transferredBytes),
                     TotalBytes = totalBytes,
                     LastRunAt = DateTime.Now.ToString("s")
                 });
-            });
-            completedFiles++;
-            completedBytes += fileLength;
+            }
         }
+
+        await Parallel.ForEachAsync(
+            sourceFiles,
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = settings.MigrationParallelism,
+                CancellationToken = token
+            },
+            async (sourceFile, fileToken) =>
+            {
+                var relative = Path.GetRelativePath(model.Directory, sourceFile);
+                var targetFile = Path.Combine(temp, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(targetFile)!);
+                await CopyAndVerifyAsync(
+                    sourceFile,
+                    targetFile,
+                    fileToken,
+                    delta => ReportProgress(delta));
+                ReportProgress(0, fileCompleted: true);
+            });
         UpdateStatus(LoadStatus() with
         {
             CurrentFiles = completedFiles,
             TotalFiles = sourceFiles.Length,
-            CurrentBytes = completedBytes,
+            CurrentBytes = transferredBytes,
             TotalBytes = totalBytes
         });
         VerifyTree(model.Directory, temp);

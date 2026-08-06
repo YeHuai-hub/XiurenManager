@@ -605,6 +605,7 @@ internal sealed class Settings
     public int ArchiveReserveGB { get; set; } = 450;
     public int MigrationBatchGB { get; set; } = 30;
     public int StorageCheckMinutes { get; set; } = 15;
+    public int MigrationParallelism { get; set; } = 3;
     public string[] PinnedLocalModels { get; set; } = [];
     public string DownloadCategory { get; set; } = LibraryPaths.DefaultCategory;
     public string[] LibraryCategories { get; set; } = [LibraryPaths.DefaultCategory, "COS", "微密圈"];
@@ -708,6 +709,7 @@ internal sealed class Settings
         ArchiveReserveGB = Math.Clamp(ArchiveReserveGB, 50, 2000);
         MigrationBatchGB = Math.Clamp(MigrationBatchGB, 1, 200);
         StorageCheckMinutes = Math.Clamp(StorageCheckMinutes, 2, 1440);
+        MigrationParallelism = Math.Clamp(MigrationParallelism, 1, 8);
         PinnedLocalModels = (PinnedLocalModels ?? [])
             .Select(x => XiurenClient.Safe(x.Trim()))
             .Where(x => !string.IsNullOrWhiteSpace(x))

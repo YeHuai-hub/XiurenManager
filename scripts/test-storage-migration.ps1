@@ -42,6 +42,7 @@ $settings = [ordered]@{
     ArchiveReserveGB = 50
     MigrationBatchGB = 1
     StorageCheckMinutes = 15
+    MigrationParallelism = 3
     PinnedLocalModels = @()
     LibraryCategories = @("TestCategory")
     LegacyDownloadRoots = @()

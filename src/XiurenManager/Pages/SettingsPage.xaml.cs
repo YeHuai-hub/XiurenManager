@@ -80,6 +80,7 @@ public partial class SettingsPage : Page
         ArchiveReserve.Text = settings.ArchiveReserveGB.ToString();
         MigrationBatch.Text = settings.MigrationBatchGB.ToString();
         StorageCheckMinutes.Text = settings.StorageCheckMinutes.ToString();
+        MigrationParallelism.Text = settings.MigrationParallelism.ToString();
         PinnedLocalModels.Text = string.Join("、", settings.PinnedLocalModels);
         StorageManagementEnabled.IsChecked = settings.StorageManagementEnabled;
     }
@@ -161,6 +162,7 @@ public partial class SettingsPage : Page
         settings.ArchiveReserveGB = Number(ArchiveReserve.Text, 450, 50, 2000);
         settings.MigrationBatchGB = Number(MigrationBatch.Text, 30, 1, 200);
         settings.StorageCheckMinutes = Number(StorageCheckMinutes.Text, 15, 2, 1440);
+        settings.MigrationParallelism = Number(MigrationParallelism.Text, 3, 1, 8);
         settings.PinnedLocalModels = PinnedLocalModels.Text
             .Split([',', '，', ';', '；', '、', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
             .Select(x => XiurenClient.Safe(x.Trim()))
