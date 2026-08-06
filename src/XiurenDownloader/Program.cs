@@ -598,6 +598,14 @@ internal sealed class Settings
     public string SearchMode { get; set; } = "Global";
     public string CategoryPath { get; set; } = "/tbgx";
     public string DownloadRoot { get; set; } = AppPaths.LibraryRoot;
+    public string ArchiveRoot { get; set; } = @"\\YeHuai_NAS\homes\yehuai\资源";
+    public bool StorageManagementEnabled { get; set; } = false;
+    public int LocalHotBudgetGB { get; set; } = 600;
+    public int LocalReserveGB { get; set; } = 400;
+    public int ArchiveReserveGB { get; set; } = 450;
+    public int MigrationBatchGB { get; set; } = 30;
+    public int StorageCheckMinutes { get; set; } = 15;
+    public string[] PinnedLocalModels { get; set; } = [];
     public string DownloadCategory { get; set; } = LibraryPaths.DefaultCategory;
     public string[] LibraryCategories { get; set; } = [LibraryPaths.DefaultCategory, "COS", "微密圈"];
     public string[] LegacyDownloadRoots { get; set; } = [];
@@ -693,6 +701,18 @@ internal sealed class Settings
             }
         }
         if (string.IsNullOrWhiteSpace(DownloadRoot)) DownloadRoot = AppPaths.LibraryRoot;
+        DownloadRoot = NormalizeConfiguredPath(DownloadRoot, AppPaths.LibraryRoot);
+        ArchiveRoot = NormalizeConfiguredPath(ArchiveRoot, "");
+        LocalHotBudgetGB = Math.Clamp(LocalHotBudgetGB, 50, 3500);
+        LocalReserveGB = Math.Clamp(LocalReserveGB, 50, 2000);
+        ArchiveReserveGB = Math.Clamp(ArchiveReserveGB, 50, 2000);
+        MigrationBatchGB = Math.Clamp(MigrationBatchGB, 1, 200);
+        StorageCheckMinutes = Math.Clamp(StorageCheckMinutes, 2, 1440);
+        PinnedLocalModels = (PinnedLocalModels ?? [])
+            .Select(x => XiurenClient.Safe(x.Trim()))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
         DownloadCategory = LibraryPaths.DefaultCategory;
         LibraryCategories = LibraryPaths.Categories(this).ToArray();
         LibraryCategories = (LibraryCategories ?? [])
@@ -712,6 +732,19 @@ internal sealed class Settings
         foreach (var v in new[] { Environment.GetEnvironmentVariable(name), Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.User), Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.Machine) })
             if (!string.IsNullOrWhiteSpace(v) && File.Exists(v)) return v;
         return "";
+    }
+
+    private static string NormalizeConfiguredPath(string? path, string fallback)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return fallback;
+        try
+        {
+            return Path.GetFullPath(path.Trim()).TrimEnd('\\');
+        }
+        catch
+        {
+            return fallback;
+        }
     }
 }
 
@@ -819,11 +852,18 @@ internal sealed class LocalStat
     public string Model { get; set; } = "";
     public string Title { get; set; } = "";
     public string LocalDir { get; set; } = "";
+    public string StorageTier { get; set; } = StorageTiers.Local;
     public int ImageCount { get; set; }
     public int VideoCount { get; set; }
     public int InvalidVideoCount { get; set; }
     public long TotalBytes { get; set; }
     public string LastScanned { get; set; } = "";
+}
+
+internal static class StorageTiers
+{
+    public const string Local = "本地";
+    public const string Archive = "NAS";
 }
 
 internal sealed class ModelStat

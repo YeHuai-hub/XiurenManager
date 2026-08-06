@@ -140,6 +140,9 @@ internal sealed class QueueService
     private async Task RunAsync()
     {
         if (Interlocked.CompareExchange(ref processing, 1, 0) != 0) return;
+        state.Storage.YieldForDownloads();
+        while (state.Storage.IsRunning)
+            await Task.Delay(500);
         stopRequested = false;
         state.NotifyJobsChanged();
         try
@@ -187,6 +190,7 @@ internal sealed class QueueService
             Volatile.Write(ref processing, 0);
             stopRequested = false;
             state.NotifyJobsChanged();
+            state.Storage.TriggerSoon();
         }
     }
 

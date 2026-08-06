@@ -15,11 +15,39 @@ internal static class LocalScanner
         var videoExts = state.Settings.VideoExts.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var results = new Dictionary<string, LocalStat>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var categoryDir in Directory.EnumerateDirectories(root)
-                     .Where(x => !AppPaths.IsInsideTool(x)))
+        ScanLibraryRoot(
+            root,
+            StorageTiers.Local,
+            imageExts,
+            videoExts,
+            results,
+            state,
+            overwrite: true);
+
+        var archiveRoot = state.Settings.ArchiveRoot;
+        if (!string.IsNullOrWhiteSpace(archiveRoot))
         {
-            var category = Path.GetFileName(categoryDir);
-            ScanCategory(categoryDir, category, imageExts, videoExts, results, state);
+            if (Directory.Exists(archiveRoot))
+            {
+                ScanLibraryRoot(
+                    archiveRoot,
+                    StorageTiers.Archive,
+                    imageExts,
+                    videoExts,
+                    results,
+                    state,
+                    overwrite: false);
+            }
+            else
+            {
+                state.WriteLog("NAS 资源库当前离线，保留上次扫描记录。");
+                foreach (var item in state.Database.LocalFiles.Where(x =>
+                             x.StorageTier.Equals(StorageTiers.Archive, StringComparison.OrdinalIgnoreCase)))
+                {
+                    var key = item.Category + "|" + item.Model + "|" + item.Title;
+                    results.TryAdd(key, item);
+                }
+            }
         }
 
         foreach (var legacyRoot in state.Settings.LegacyDownloadRoots
@@ -33,7 +61,8 @@ internal static class LocalScanner
                 videoExts,
                 results,
                 state,
-                overwrite: false);
+                overwrite: false,
+                storageTier: StorageTiers.Local);
         }
 
         state.Database.LocalFiles = results.Values
@@ -43,7 +72,9 @@ internal static class LocalScanner
             .ToList();
         ReconcileResourceLocations(state);
         state.Database.Save();
-        state.WriteLog($"本地扫描完成: {results.Count} 套资源");
+        var localCount = results.Values.Count(x => x.StorageTier == StorageTiers.Local);
+        var archiveCount = results.Count - localCount;
+        state.WriteLog($"资源库扫描完成: {results.Count} 套（本地 {localCount} / NAS {archiveCount}）");
         if (notify)
             state.NotifyDataChanged();
     }
@@ -60,6 +91,18 @@ internal static class LocalScanner
             if (Directory.Exists(modernPath))
             {
                 resource.LocalDir = modernPath;
+                continue;
+            }
+            var archiveModelPath = LibraryPaths.ArchiveModelRoot(
+                state.Settings,
+                resource.Category,
+                resource.Model);
+            var archivePath = string.IsNullOrWhiteSpace(archiveModelPath)
+                ? ""
+                : Path.Combine(archiveModelPath, XiurenClient.Safe(resource.Title));
+            if (!string.IsNullOrWhiteSpace(archivePath) && Directory.Exists(archivePath))
+            {
+                resource.LocalDir = archivePath;
                 continue;
             }
             if (Directory.Exists(resource.LocalDir))
@@ -99,10 +142,12 @@ internal static class LocalScanner
         HashSet<string> videoExts,
         Dictionary<string, LocalStat> results,
         AppState state,
-        bool overwrite = true)
+        bool overwrite = true,
+        string storageTier = StorageTiers.Local)
     {
         foreach (var modelDir in Directory.EnumerateDirectories(categoryRoot)
-                     .Where(x => !AppPaths.IsInsideTool(x)))
+                     .Where(x => !AppPaths.IsInsideTool(x))
+                     .Where(x => !Path.GetFileName(x).StartsWith('.')))
         {
             var model = Path.GetFileName(modelDir);
             foreach (var setDir in Directory.EnumerateDirectories(modelDir)
@@ -126,6 +171,7 @@ internal static class LocalScanner
                         Model = model,
                         Title = Path.GetFileName(setDir),
                         LocalDir = setDir,
+                        StorageTier = storageTier,
                         ImageCount = files.Count(x =>
                             imageExts.Contains(x.Extension) &&
                             MediaFileValidator.QuickImageHeaderLooksValid(x.FullName)),
@@ -135,7 +181,13 @@ internal static class LocalScanner
                         LastScanned = DateTime.Now.ToString("s")
                     };
                     var key = item.Category + "|" + item.Model + "|" + item.Title;
-                    if (overwrite || !results.ContainsKey(key))
+                    if (!overwrite && results.TryGetValue(key, out var existing) &&
+                        !PathsEqual(existing.LocalDir, item.LocalDir))
+                    {
+                        state.WriteLog(
+                            $"检测到跨存储重复套图，优先保留本地记录: {item.Model} / {item.Title}");
+                    }
+                    else if (overwrite || !results.ContainsKey(key))
                         results[key] = item;
                 }
                 catch (Exception ex)
@@ -143,6 +195,31 @@ internal static class LocalScanner
                     state.WriteLog($"扫描失败: {setDir} | {ex.Message}");
                 }
             }
+        }
+    }
+
+    private static void ScanLibraryRoot(
+        string root,
+        string storageTier,
+        HashSet<string> imageExts,
+        HashSet<string> videoExts,
+        Dictionary<string, LocalStat> results,
+        AppState state,
+        bool overwrite)
+    {
+        foreach (var categoryDir in Directory.EnumerateDirectories(root)
+                     .Where(x => !AppPaths.IsInsideTool(x)))
+        {
+            var category = Path.GetFileName(categoryDir);
+            ScanCategory(
+                categoryDir,
+                category,
+                imageExts,
+                videoExts,
+                results,
+                state,
+                overwrite,
+                storageTier);
         }
     }
 

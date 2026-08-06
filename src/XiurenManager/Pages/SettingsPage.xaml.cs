@@ -60,6 +60,7 @@ public partial class SettingsPage : Page
         Password.Password = settings.Password;
         CategoryPath.Text = settings.CategoryPath;
         DownloadRoot.Text = settings.DownloadRoot;
+        ArchiveRoot.Text = settings.ArchiveRoot;
         BaiduPcs.Text = settings.BaiduPcsPath;
         SevenZip.Text = settings.SevenZipPath;
         Ffprobe.Text = settings.FfprobePath;
@@ -74,6 +75,13 @@ public partial class SettingsPage : Page
         KeepSidecars.IsChecked = settings.KeepSidecarFiles;
         UseProxy.IsChecked = settings.UseSystemProxy;
         LowSpeedGuard.IsChecked = settings.LowSpeedGuardEnabled;
+        LocalHotBudget.Text = settings.LocalHotBudgetGB.ToString();
+        LocalReserve.Text = settings.LocalReserveGB.ToString();
+        ArchiveReserve.Text = settings.ArchiveReserveGB.ToString();
+        MigrationBatch.Text = settings.MigrationBatchGB.ToString();
+        StorageCheckMinutes.Text = settings.StorageCheckMinutes.ToString();
+        PinnedLocalModels.Text = string.Join("、", settings.PinnedLocalModels);
+        StorageManagementEnabled.IsChecked = settings.StorageManagementEnabled;
     }
 
     private void Save_OnClick(object sender, RoutedEventArgs e)
@@ -87,6 +95,7 @@ public partial class SettingsPage : Page
         }
 
         var libraryRoot = DownloadRoot.Text.Trim();
+        var archiveRoot = ArchiveRoot.Text.Trim();
         try
         {
             var fullRoot = Path.GetFullPath(libraryRoot).TrimEnd('\\');
@@ -107,12 +116,32 @@ public partial class SettingsPage : Page
             return;
         }
 
+        try
+        {
+            archiveRoot = string.IsNullOrWhiteSpace(archiveRoot)
+                ? ""
+                : Path.GetFullPath(archiveRoot).TrimEnd('\\');
+            if (!string.IsNullOrWhiteSpace(archiveRoot) &&
+                (LibraryPaths.IsInside(libraryRoot, archiveRoot) ||
+                 LibraryPaths.IsInside(archiveRoot, libraryRoot) ||
+                 archiveRoot.Equals(libraryRoot, StringComparison.OrdinalIgnoreCase)))
+            {
+                MessageBox.Show("本地资源库与 NAS 资源库不能相同或互相包含。", "存储路径");
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("NAS 资源库路径无效: " + ex.Message, "存储路径");
+            return;
+        }
         var settings = state.Settings;
         settings.BaseUrl = BaseUrl.Text.Trim().TrimEnd('/');
         settings.UserName = UserName.Text.Trim();
         settings.Password = Password.Password;
         settings.CategoryPath = string.IsNullOrWhiteSpace(CategoryPath.Text) ? "/tbgx" : CategoryPath.Text.Trim();
         settings.DownloadRoot = libraryRoot;
+        settings.ArchiveRoot = archiveRoot;
         settings.BaiduPcsPath = BaiduPcs.Text.Trim();
         settings.SevenZipPath = SevenZip.Text.Trim();
         settings.FfprobePath = Ffprobe.Text.Trim();
@@ -127,10 +156,26 @@ public partial class SettingsPage : Page
         settings.KeepSidecarFiles = KeepSidecars.IsChecked == true;
         settings.UseSystemProxy = UseProxy.IsChecked == true;
         settings.LowSpeedGuardEnabled = LowSpeedGuard.IsChecked == true;
+        settings.LocalHotBudgetGB = Number(LocalHotBudget.Text, 600, 50, 3500);
+        settings.LocalReserveGB = Number(LocalReserve.Text, 400, 50, 2000);
+        settings.ArchiveReserveGB = Number(ArchiveReserve.Text, 450, 50, 2000);
+        settings.MigrationBatchGB = Number(MigrationBatch.Text, 30, 1, 200);
+        settings.StorageCheckMinutes = Number(StorageCheckMinutes.Text, 15, 2, 1440);
+        settings.PinnedLocalModels = PinnedLocalModels.Text
+            .Split([',', '，', ';', '；', '、', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(x => XiurenClient.Safe(x.Trim()))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        settings.StorageManagementEnabled = StorageManagementEnabled.IsChecked == true;
         Directory.CreateDirectory(settings.DownloadRoot);
         foreach (var category in LibraryPaths.Categories(settings))
             Directory.CreateDirectory(Path.Combine(settings.DownloadRoot, category));
         settings.Save();
+        if (settings.StorageManagementEnabled)
+            state.Storage.Resume();
+        else
+            state.Storage.Pause();
         state.WriteLog("设置已保存。");
         MessageBox.Show("设置已保存。", "写真资源管理器");
     }

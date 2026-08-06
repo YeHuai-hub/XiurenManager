@@ -14,6 +14,8 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
             <StackPanel>
                 <TextBlock Text="设置" Style="{StaticResource PageTitleStyle}" />
@@ -112,6 +114,70 @@
                 </WrapPanel>
 
                 <ui:Button Grid.Row="8"
+                           Grid.Column="1"
+                           Margin="0,14,0,0"
+                           VerticalAlignment="Top"
+                           HorizontalAlignment="Left"
+                           Appearance="Primary"
+                           Content="保存设置"
+                           Icon="{ui:SymbolIcon Save24}"
+                           Click="Save_OnClick" />
+            </Grid>
+
+            <TextBlock Grid.Row="5" Margin="0,22,0,0" Text="本地与 NAS 分层" Style="{StaticResource SectionTitleStyle}" />
+            <Grid Grid.Row="6" Margin="0,14,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="150" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="32" />
+                    <ColumnDefinition Width="150" />
+                    <ColumnDefinition Width="190" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="54" />
+                    <RowDefinition Height="54" />
+                    <RowDefinition Height="54" />
+                    <RowDefinition Height="54" />
+                    <RowDefinition Height="72" />
+                    <RowDefinition Height="54" />
+                    <RowDefinition Height="64" />
+                </Grid.RowDefinitions>
+
+                <TextBlock Text="NAS 资源库" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
+                <ui:TextBox x:Name="ArchiveRoot" Grid.Column="1" Grid.ColumnSpan="4" />
+
+                <TextBlock Grid.Row="1" Text="本地热库上限 GB" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
+                <ui:TextBox x:Name="LocalHotBudget" Grid.Row="1" Grid.Column="1" Width="120" HorizontalAlignment="Left" />
+                <TextBlock Grid.Row="1" Grid.Column="3" Text="本地保留空间 GB" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
+                <ui:TextBox x:Name="LocalReserve" Grid.Row="1" Grid.Column="4" Width="120" HorizontalAlignment="Left" />
+
+                <TextBlock Grid.Row="2" Text="NAS 保留空间 GB" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
+                <ui:TextBox x:Name="ArchiveReserve" Grid.Row="2" Grid.Column="1" Width="120" HorizontalAlignment="Left" />
+                <TextBlock Grid.Row="2" Grid.Column="3" Text="每批迁移上限 GB" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
+                <ui:TextBox x:Name="MigrationBatch" Grid.Row="2" Grid.Column="4" Width="120" HorizontalAlignment="Left" />
+
+                <TextBlock Grid.Row="3" Text="自动检查间隔 分钟" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
+                <ui:TextBox x:Name="StorageCheckMinutes" Grid.Row="3" Grid.Column="1" Width="120" HorizontalAlignment="Left" />
+                <TextBlock Grid.Row="3" Grid.Column="3" Text="迁移单位" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
+                <TextBlock Grid.Row="3" Grid.Column="4" Text="整模特 · 不拆分套图" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" />
+
+                <TextBlock Grid.Row="4" Text="固定在本地的模特" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
+                <ui:TextBox x:Name="PinnedLocalModels"
+                            Grid.Row="4"
+                            Grid.Column="1"
+                            Grid.ColumnSpan="4"
+                            TextWrapping="Wrap"
+                            AcceptsReturn="True"
+                            ToolTip="多个名称用逗号、分号或换行分隔" />
+
+                <CheckBox x:Name="StorageManagementEnabled"
+                          Grid.Row="5"
+                          Grid.Column="1"
+                          Grid.ColumnSpan="4"
+                          Content="启用自动冷热分层（下载任务优先，NAS 离线时自动等待）"
+                          Foreground="{StaticResource PrimaryTextBrush}" />
+
+                <ui:Button Grid.Row="6"
                            Grid.Column="1"
                            Margin="0,14,0,0"
                            VerticalAlignment="Top"

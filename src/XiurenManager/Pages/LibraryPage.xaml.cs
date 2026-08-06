@@ -36,7 +36,7 @@ internal sealed class SetCardRow : INotifyPropertyChanged
     public string MediaLabel => Item.VideoCount + Item.InvalidVideoCount > 0
         ? $"{Item.ImageCount} 图  {Item.VideoCount + Item.InvalidVideoCount} 视"
         : $"{Item.ImageCount} 张";
-    public string SizeLabel => FormatBytes(Item.TotalBytes);
+    public string SizeLabel => $"{Item.StorageTier} · {FormatBytes(Item.TotalBytes)}";
 
     public ImageSource? Cover
     {

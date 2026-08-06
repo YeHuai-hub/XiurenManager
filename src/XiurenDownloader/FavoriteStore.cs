@@ -63,6 +63,17 @@ internal sealed class FavoriteStore
         return Find(item)?.Tags?.ToArray() ?? [];
     }
 
+    public (int Score, DateTime UpdatedAt) GetModelPriority(string model)
+    {
+        var matches = entries.Where(x =>
+            x.Model.Equals(model, StringComparison.OrdinalIgnoreCase)).ToArray();
+        var updatedAt = matches
+            .Select(x => DateTime.TryParse(x.UpdatedAt, out var value) ? value : DateTime.MinValue)
+            .DefaultIfEmpty(DateTime.MinValue)
+            .Max();
+        return (matches.Sum(x => x.Score), updatedAt);
+    }
+
     public int ChangeScore(LocalStat item, int delta)
     {
         var entry = Find(item);
@@ -118,6 +129,25 @@ internal sealed class FavoriteStore
         entry.Title = title;
         entry.UpdatedAt = DateTime.Now.ToString("s");
         Save();
+    }
+
+    public void UpdateModelLocations(
+        string model,
+        string sourceRoot,
+        string destinationRoot)
+    {
+        var changed = false;
+        foreach (var entry in entries.Where(x =>
+                     x.Model.Equals(model, StringComparison.OrdinalIgnoreCase) &&
+                     IsInside(x.LocalDir, sourceRoot)))
+        {
+            entry.LocalDir = NormalizePath(Path.Combine(
+                destinationRoot,
+                Path.GetRelativePath(sourceRoot, entry.LocalDir)));
+            entry.UpdatedAt = DateTime.Now.ToString("s");
+            changed = true;
+        }
+        if (changed) Save();
     }
 
     private FavoriteEntry? Find(LocalStat item)
@@ -185,6 +215,21 @@ internal sealed class FavoriteStore
         catch
         {
             return path.Trim();
+        }
+    }
+
+    private static bool IsInside(string path, string root)
+    {
+        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(root)) return false;
+        try
+        {
+            var fullPath = NormalizePath(path) + "\\";
+            var fullRoot = NormalizePath(root) + "\\";
+            return fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
         }
     }
 }

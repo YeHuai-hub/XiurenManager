@@ -1,7 +1,10 @@
 #define MyAppName "写真资源管理器"
-#define MyAppVersion "3.3.7"
+#define MyAppVersion "3.4.0"
 #define MyAppPublisher "Private Local Tools"
 #define MyAppExeName "XiurenManager.exe"
+#ifndef PublishDir
+  #define PublishDir "..\publish-v3"
+#endif
 
 [Setup]
 AppId={{79028188-CB1B-46CF-AA53-57AAE895C10E}
@@ -9,7 +12,7 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} 私人版 {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-VersionInfoVersion=3.3.7.0
+VersionInfoVersion=3.4.0.0
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
@@ -18,7 +21,7 @@ DefaultDirName=E:\Apps\写真资源管理器
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\artifacts\installer
-OutputBaseFilename=写真资源管理器-私人版-Setup-3.3.7
+OutputBaseFilename=写真资源管理器-私人版-Setup-3.4.0
 SetupIconFile=..\src\XiurenDownloader\Assets\app.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 PrivilegesRequired=lowest
@@ -41,7 +44,7 @@ Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式："
 
 [Files]
-Source: "..\publish-v3\*"; DestDir: "{app}"; Excludes: "libvlc\win-x86\*,libvlc\win-arm64\*,tools\ffmpeg\*"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PublishDir}\*"; DestDir: "{app}"; Excludes: "libvlc\win-x86\*,libvlc\win-arm64\*,tools\ffmpeg\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\tools\ffmpeg\bin\ffmpeg.exe"; DestDir: "{app}\tools\ffmpeg\bin"; Flags: ignoreversion
 Source: "..\tools\ffmpeg\bin\ffprobe.exe"; DestDir: "{app}\tools\ffmpeg\bin"; Flags: ignoreversion
 Source: "..\tools\ffmpeg\LICENSE"; DestDir: "{app}\tools\ffmpeg"; Flags: ignoreversion

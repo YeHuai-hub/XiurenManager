@@ -16,6 +16,7 @@
 /artifacts/
 /publish/
 /publish-*/
+/tmp/
 /*.zip
 /*.sha256
 /src/**/bin/

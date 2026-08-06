@@ -13,6 +13,7 @@ internal sealed class AppState
     public FavoriteStore Favorites { get; } = FavoriteStore.Load();
     public ObservableCollection<string> SessionLog { get; } = [];
     public QueueService Queue { get; }
+    public StorageMigrationService Storage { get; }
     private readonly Channel<string> persistentLog = Channel.CreateUnbounded<string>(
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
 
@@ -23,6 +24,7 @@ internal sealed class AppState
     public AppState()
     {
         Queue = new QueueService(this);
+        Storage = new StorageMigrationService(this);
         _ = Task.Run(PersistLogsAsync);
     }
 

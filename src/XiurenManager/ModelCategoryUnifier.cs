@@ -147,20 +147,24 @@ internal static class ModelCategoryUnifier
         string targetCategory,
         string model)
     {
-        var source = LibraryPaths.ModelRoot(settings, sourceCategory, model);
-        if (!Directory.Exists(source))
-            return;
-
-        var target = LibraryPaths.ModelRoot(settings, targetCategory, model);
-        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-        if (!Directory.Exists(target))
+        foreach (var (source, target) in ModelRootPairs(
+                     settings,
+                     sourceCategory,
+                     targetCategory,
+                     model))
         {
-            Directory.Move(source, target);
-            return;
-        }
+            if (string.IsNullOrWhiteSpace(source) || !Directory.Exists(source))
+                continue;
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            if (!Directory.Exists(target))
+            {
+                Directory.Move(source, target);
+                continue;
+            }
 
-        MergeDirectory(source, target, sourceCategory);
-        Directory.Delete(source, true);
+            MergeDirectory(source, target, sourceCategory);
+            Directory.Delete(source, true);
+        }
     }
 
     private static void MergeDirectory(string source, string target, string sourceCategory)
@@ -205,22 +209,46 @@ internal static class ModelCategoryUnifier
 
         try
         {
-            var oldRoot = Path.GetFullPath(
-                LibraryPaths.ModelRoot(settings, oldCategory, model)).TrimEnd('\\');
             var fullPath = Path.GetFullPath(path);
-            if (!fullPath.Equals(oldRoot, StringComparison.OrdinalIgnoreCase) &&
-                !fullPath.StartsWith(oldRoot + "\\", StringComparison.OrdinalIgnoreCase))
+            foreach (var (oldRootValue, targetRootValue) in ModelRootPairs(
+                         settings,
+                         oldCategory,
+                         targetCategory,
+                         model))
             {
-                return path;
+                if (string.IsNullOrWhiteSpace(oldRootValue) ||
+                    string.IsNullOrWhiteSpace(targetRootValue))
+                    continue;
+                var oldRoot = Path.GetFullPath(oldRootValue).TrimEnd('\\');
+                if (!fullPath.Equals(oldRoot, StringComparison.OrdinalIgnoreCase) &&
+                    !fullPath.StartsWith(oldRoot + "\\", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                return Path.Combine(
+                    targetRootValue,
+                    Path.GetRelativePath(oldRoot, fullPath));
             }
-
-            return Path.Combine(
-                LibraryPaths.ModelRoot(settings, targetCategory, model),
-                Path.GetRelativePath(oldRoot, fullPath));
+            return path;
         }
         catch
         {
             return path;
+        }
+    }
+
+    private static IEnumerable<(string Source, string Target)> ModelRootPairs(
+        Settings settings,
+        string sourceCategory,
+        string targetCategory,
+        string model)
+    {
+        yield return (
+            LibraryPaths.ModelRoot(settings, sourceCategory, model),
+            LibraryPaths.ModelRoot(settings, targetCategory, model));
+        if (!string.IsNullOrWhiteSpace(settings.ArchiveRoot))
+        {
+            yield return (
+                LibraryPaths.ArchiveModelRoot(settings, sourceCategory, model),
+                LibraryPaths.ArchiveModelRoot(settings, targetCategory, model));
         }
     }
 }

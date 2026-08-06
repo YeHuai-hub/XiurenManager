@@ -3,7 +3,7 @@
       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
       xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
       Background="Transparent">
-    <Grid Margin="26,20,26,24" MaxWidth="980" HorizontalAlignment="Left">
+    <Grid Margin="26,20,26,24" MaxWidth="1080" HorizontalAlignment="Left">
         <Grid.RowDefinitions>
             <RowDefinition Height="74" />
             <RowDefinition Height="Auto" />
@@ -74,10 +74,13 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel>
-                    <TextBlock Text="资源库迁移进度" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Text="本地 / NAS 存储整理" Style="{StaticResource SectionTitleStyle}" />
                     <TextBlock x:Name="MigrationStatus"
                                Text="尚未启动迁移任务"
                                Margin="0,6,0,0"
+                               Style="{StaticResource SecondaryTextStyle}" />
+                    <TextBlock x:Name="MigrationCapacity"
+                               Margin="0,4,0,0"
                                Style="{StaticResource SecondaryTextStyle}" />
                 </StackPanel>
                 <WrapPanel Grid.Column="1" VerticalAlignment="Center">
@@ -92,6 +95,11 @@
                                Content="继续"
                                Icon="{ui:SymbolIcon Play24}"
                                Click="ResumeMigration_OnClick" />
+                    <ui:Button x:Name="RunMigrationButton"
+                               Margin="8,0,0,0"
+                               Content="立即整理一批"
+                               Icon="{ui:SymbolIcon ArrowMove24}"
+                               Click="RunMigration_OnClick" />
                     <ui:Button Margin="8,0,0,0"
                                Content="日志"
                                Icon="{ui:SymbolIcon DocumentText24}"

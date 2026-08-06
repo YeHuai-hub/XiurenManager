@@ -9,32 +9,54 @@ namespace XiurenManager.Pages;
 public partial class ToolsPage : Page
 {
     private readonly AppState state = App.State;
-    private const string MigrationTaskName = "XiurenManager-ResourceMigration";
-    private static string MigrationStateFile =>
-        Path.Combine(AppPaths.DataDir, "library-migration-state.json");
     private static string MigrationLogFile =>
-        Path.Combine(AppPaths.LogDir, "library-migration.log");
+        Path.Combine(AppPaths.LogDir, "storage-migration.log");
 
     public ToolsPage()
     {
         InitializeComponent();
-        Loaded += (_, _) => RefreshMigrationStatus();
+        Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
     }
+
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        state.Storage.StatusChanged += Storage_OnStatusChanged;
+        RefreshMigrationStatus();
+    }
+
+    private void OnUnloaded(object sender, RoutedEventArgs e) =>
+        state.Storage.StatusChanged -= Storage_OnStatusChanged;
+
+    private void Storage_OnStatusChanged(object? sender, EventArgs e) =>
+        RefreshMigrationStatus();
 
     private void RefreshMigration_OnClick(object sender, RoutedEventArgs e) =>
         RefreshMigrationStatus();
 
-    private async void PauseMigration_OnClick(object sender, RoutedEventArgs e)
+    private void PauseMigration_OnClick(object sender, RoutedEventArgs e)
     {
-        await ChangeMigrationTaskAsync("/Change /TN \"" + MigrationTaskName + "\" /DISABLE");
+        state.Storage.Pause();
+        RefreshMigrationStatus();
     }
 
-    private async void ResumeMigration_OnClick(object sender, RoutedEventArgs e)
+    private void ResumeMigration_OnClick(object sender, RoutedEventArgs e)
     {
-        if (await ChangeMigrationTaskAsync(
-                "/Change /TN \"" + MigrationTaskName + "\" /ENABLE"))
+        state.Storage.Resume();
+        RefreshMigrationStatus();
+    }
+
+    private async void RunMigration_OnClick(object sender, RoutedEventArgs e)
+    {
+        RunMigrationButton.IsEnabled = false;
+        try
         {
-            await ChangeMigrationTaskAsync("/Run /TN \"" + MigrationTaskName + "\"");
+            await state.Storage.RunBatchAsync(manual: true);
+            RefreshMigrationStatus();
+        }
+        finally
+        {
+            RunMigrationButton.IsEnabled = true;
         }
     }
 
@@ -51,67 +73,33 @@ public partial class ToolsPage : Page
         });
     }
 
-    private async Task<bool> ChangeMigrationTaskAsync(string arguments)
-    {
-        try
-        {
-            using var process = Process.Start(new ProcessStartInfo("schtasks.exe", arguments)
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            });
-            if (process == null)
-                throw new InvalidOperationException("无法启动任务计划程序。");
-            await process.WaitForExitAsync();
-            if (process.ExitCode != 0)
-            {
-                var error = await process.StandardError.ReadToEndAsync();
-                throw new InvalidOperationException(
-                    string.IsNullOrWhiteSpace(error)
-                        ? "找不到迁移定时任务。"
-                        : error.Trim());
-            }
-            RefreshMigrationStatus();
-            return true;
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(ex.Message, "迁移任务");
-            return false;
-        }
-    }
-
     private void RefreshMigrationStatus()
     {
-        if (!File.Exists(MigrationStateFile))
-        {
-            MigrationStatus.Text = "尚未启动迁移任务";
-            return;
-        }
-        try
-        {
-            using var document = JsonDocument.Parse(
-                File.ReadAllText(MigrationStateFile));
-            var root = document.RootElement;
-            var status = root.GetProperty("Status").GetString() ?? "Pending";
-            var total = root.GetProperty("TotalMoved").GetInt32();
-            var last = root.GetProperty("LastMoved").GetInt32();
-            var remaining = root.GetProperty("Remaining").GetInt32();
-            var error = root.GetProperty("LastError").GetString() ?? "";
-            MigrationStatus.Text =
-                $"状态 {status} · 累计 {total} 套 · 本轮 {last} 套 · 剩余 {remaining} 套" +
-                (string.IsNullOrWhiteSpace(error) ? "" : $" · {error}");
-        }
-        catch (Exception ex)
-        {
-            MigrationStatus.Text = "进度读取失败: " + ex.Message;
-        }
+        var value = state.Storage.GetStatus();
+        var enabled = value.Enabled ? "自动整理已启用" : "自动整理已暂停";
+        var current = string.IsNullOrWhiteSpace(value.CurrentModel)
+            ? ""
+            : $" · 当前 {value.CurrentModel} ({value.Phase})";
+        MigrationStatus.Text =
+            $"{enabled} · 状态 {value.Status}{current} · 本批 {value.LastBatchModels} 个模特 / " +
+            StorageMigrationService.FormatBytes(value.LastBatchBytes) +
+            (string.IsNullOrWhiteSpace(value.LastError) ? "" : " · " + value.LastError);
+        MigrationCapacity.Text =
+            $"本地可用 {StorageMigrationService.FormatBytes(value.LocalFreeBytes)} · " +
+            (value.ArchiveOnline
+                ? $"NAS 可用 {StorageMigrationService.FormatBytes(value.ArchiveFreeBytes)}"
+                : "NAS 离线") +
+            $" · 累计迁移 {value.TotalMovedModels} 个模特 / {StorageMigrationService.FormatBytes(value.TotalMovedBytes)}";
+        RunMigrationButton.IsEnabled = !state.Storage.IsRunning;
     }
 
     private async void Scan_OnClick(object sender, RoutedEventArgs e)
     {
+        if (state.Storage.IsRunning)
+        {
+            MessageBox.Show("存储迁移正在运行，请等待当前模特完成或先暂停迁移。");
+            return;
+        }
         await Task.Run(() => LocalScanner.Scan(state));
         MessageBox.Show("本地资源扫描完成。");
     }

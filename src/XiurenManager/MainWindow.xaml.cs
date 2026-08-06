@@ -7,24 +7,15 @@ namespace XiurenManager;
 
 public partial class MainWindow : FluentWindow
 {
-    private readonly DispatcherTimer migrationSyncTimer = new()
-    {
-        Interval = TimeSpan.FromSeconds(15)
-    };
-    private DateTime lastMigrationStateWriteUtc;
-
     public MainWindow()
     {
         InitializeComponent();
         Loaded += OnLoaded;
-        Closed += (_, _) => migrationSyncTimer.Stop();
-        migrationSyncTimer.Tick += (_, _) => SyncMigratedLocations();
+        Closed += (_, _) => App.State.Storage.Dispose();
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        UpdateMigrationStateTimestamp();
-        migrationSyncTimer.Start();
         RootNavigation.Navigate(typeof(RecommendationPage));
         try
         {
@@ -44,28 +35,10 @@ public partial class MainWindow : FluentWindow
                 System.Windows.MessageBoxButton.OK,
                 System.Windows.MessageBoxImage.Warning);
         }
+        finally
+        {
+            App.State.Storage.Start();
+        }
     }
 
-    private void SyncMigratedLocations()
-    {
-        var stateFile = Path.Combine(
-            XiurenDownloader.AppPaths.DataDir,
-            "library-migration-state.json");
-        if (!File.Exists(stateFile))
-            return;
-        var writeTime = File.GetLastWriteTimeUtc(stateFile);
-        if (writeTime <= lastMigrationStateWriteUtc)
-            return;
-        lastMigrationStateWriteUtc = writeTime;
-        LibraryLocationReconciler.Reconcile(App.State);
-    }
-
-    private void UpdateMigrationStateTimestamp()
-    {
-        var stateFile = Path.Combine(
-            XiurenDownloader.AppPaths.DataDir,
-            "library-migration-state.json");
-        if (File.Exists(stateFile))
-            lastMigrationStateWriteUtc = File.GetLastWriteTimeUtc(stateFile);
-    }
 }
