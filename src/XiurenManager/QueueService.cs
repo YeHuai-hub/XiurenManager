@@ -19,6 +19,7 @@ internal sealed class QueueService
         foreach (var job in interrupted)
         {
             job.Status = "Canceled";
+            job.Stage = "";
             job.Error = "应用上次退出时任务仍在运行，可点击继续队列恢复。";
             job.FinishedAt = DateTime.Now.ToString("s");
         }
@@ -89,6 +90,7 @@ internal sealed class QueueService
                 state.WriteLog($"检测到“{job.Target}”已有入库链接，继续操作将直接恢复未完成下载，不再从头搜索。");
             }
             job.Status = "Queued";
+            job.Stage = "";
             job.FinishedAt = "";
             job.Error = "";
             database.Save();
@@ -158,6 +160,7 @@ internal sealed class QueueService
 
                 cancellation = new CancellationTokenSource();
                 job.Status = "Running";
+                job.Stage = "准备";
                 job.Error = "";
                 state.Database.Save();
                 state.WriteLog("开始任务: " + Label(job));
@@ -167,15 +170,18 @@ internal sealed class QueueService
                 {
                     await ExecuteAsync(job, cancellation.Token);
                     job.Status = "Done";
+                    job.Stage = "";
                 }
                 catch (OperationCanceledException)
                 {
                     job.Status = "Canceled";
+                    job.Stage = "";
                     state.WriteLog("任务已停止: " + Label(job));
                 }
                 catch (Exception ex)
                 {
                     job.Status = "Failed";
+                    job.Stage = "";
                     job.Error = ErrorText.Format(ex);
                     state.WriteLog("任务失败: " + job.Error.Replace(Environment.NewLine, " | "));
                 }
@@ -202,12 +208,16 @@ internal sealed class QueueService
     {
         if (job.Type is "Search" or "SearchDownload")
         {
+            SetStage(job, "搜索");
             var resources = await SearchAsync(job, token);
             state.WriteLog($"本轮入库 {resources.Count} 套");
             if (job.Type == "SearchDownload")
+            {
+                SetStage(job, "下载与解压");
                 await new Downloader(state.Settings, state.Database, Progress()).RunAsync(resources, token);
-            if (job.Type == "SearchDownload")
-                await ScanAsync(token);
+                SetStage(job, "刷新媒体库");
+                await ScanAsync(resources, token);
+            }
             return;
         }
 
@@ -219,8 +229,10 @@ internal sealed class QueueService
                     !x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase))
                 .ToList();
             state.WriteLog($"下载全部分类就绪未完成项: {resources.Count} 条");
+            SetStage(job, "下载与解压");
             await new Downloader(state.Settings, state.Database, Progress()).RunAsync(resources, token);
-            await ScanAsync(token);
+            SetStage(job, "刷新媒体库");
+            await ScanAsync(resources, token);
             return;
         }
 
@@ -235,8 +247,10 @@ internal sealed class QueueService
                     HasIncompleteLocalDownload(x))
                 .ToList();
             state.WriteLog($"续传“{category}”分类本地未完成项：{resources.Count} 条。");
+            SetStage(job, "下载与解压");
             await new Downloader(state.Settings, state.Database, Progress()).RunAsync(resources, token);
-            await ScanAsync(token);
+            SetStage(job, "刷新媒体库");
+            await ScanAsync(resources, token);
             return;
         }
 
@@ -253,8 +267,10 @@ internal sealed class QueueService
                     string.IsNullOrWhiteSpace(XiurenClient.MatchExclusion(x.Title, exclusions)))
                 .ToList();
             state.WriteLog($"恢复“{model}”未完成下载: {resources.Count} 条");
+            SetStage(job, "下载与解压");
             await new Downloader(state.Settings, state.Database, Progress()).RunAsync(resources, token);
-            await ScanAsync(token);
+            SetStage(job, "刷新媒体库");
+            await ScanAsync(resources, token);
             return;
         }
 
@@ -431,9 +447,17 @@ internal sealed class QueueService
         return false;
     }
 
-    private async Task ScanAsync(CancellationToken token)
+    private async Task ScanAsync(IEnumerable<ResourceItem> resources, CancellationToken token)
     {
-        await Task.Run(() => LocalScanner.Scan(state, token: token), token);
+        state.WriteLog("下载阶段已结束，正在增量刷新本次涉及的模特。");
+        await Task.Run(() => LocalScanner.ScanModels(state, resources, token: token), token);
+    }
+
+    private void SetStage(JobItem job, string stage)
+    {
+        job.Stage = stage;
+        state.Database.Save();
+        state.NotifyJobsChanged();
     }
 
     private IProgress<string> Progress() => new Progress<string>(state.WriteLog);

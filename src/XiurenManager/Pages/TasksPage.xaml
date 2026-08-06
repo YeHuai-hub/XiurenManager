@@ -47,7 +47,7 @@
                   RowBackground="{StaticResource SurfaceBrush}"
                   AlternatingRowBackground="{StaticResource SurfaceHoverBrush}">
             <DataGrid.Columns>
-                <DataGridTextColumn Header="状态" Binding="{Binding Status}" Width="90" />
+                <DataGridTextColumn Header="状态" Binding="{Binding Status}" Width="150" />
                 <DataGridTextColumn Header="任务" Binding="{Binding Label}" Width="230" />
                 <DataGridTextColumn Header="搜索名称" Binding="{Binding Target}" Width="150" />
                 <DataGridTextColumn Header="别名" Binding="{Binding Aliases}" Width="180" />

@@ -1,4 +1,5 @@
 using System.Windows;
+using XiurenDownloader;
 
 namespace XiurenManager;
 
@@ -20,6 +21,21 @@ public partial class App : Application
         if (e.Args.Any(arg => arg.Equals("--scan-local", StringComparison.OrdinalIgnoreCase)))
         {
             LocalScanner.Scan(State, notify: false);
+            Shutdown(0);
+            return;
+        }
+
+        var scanModelIndex = Array.FindIndex(e.Args, arg =>
+            arg.Equals("--scan-local-model", StringComparison.OrdinalIgnoreCase));
+        if (scanModelIndex >= 0 && scanModelIndex + 2 < e.Args.Length)
+        {
+            var category = LibraryPaths.NormalizeCategory(e.Args[scanModelIndex + 1]);
+            var model = XiurenClient.Safe(e.Args[scanModelIndex + 2]);
+            var resources = State.Database.Resources.Where(x =>
+                    x.Category.Equals(category, StringComparison.OrdinalIgnoreCase) &&
+                    x.Model.Equals(model, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            LocalScanner.ScanModels(State, resources, notify: false);
             Shutdown(0);
             return;
         }

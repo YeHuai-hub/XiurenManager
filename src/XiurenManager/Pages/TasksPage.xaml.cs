@@ -8,7 +8,10 @@ namespace XiurenManager.Pages;
 internal sealed class TaskRow
 {
     public required JobItem Item { get; init; }
-    public string Status => Item.Status;
+    public string Status => Item.Status.Equals("Running", StringComparison.OrdinalIgnoreCase) &&
+                            !string.IsNullOrWhiteSpace(Item.Stage)
+        ? $"Running · {Item.Stage}"
+        : Item.Status;
     public string Label => QueueService.Label(Item);
     public string Target => Item.Target;
     public string Aliases => Item.Aliases;

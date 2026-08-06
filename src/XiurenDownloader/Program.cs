@@ -843,6 +843,7 @@ internal sealed class JobItem
     public string CategoryPath { get; set; } = "/tbgx";
     public string DownloadCategory { get; set; } = LibraryPaths.DefaultCategory;
     public string Status { get; set; } = "";
+    public string Stage { get; set; } = "";
     public string Error { get; set; } = "";
     public string StartedAt { get; set; } = DateTime.Now.ToString("s");
     public string FinishedAt { get; set; } = "";
@@ -1557,7 +1558,7 @@ internal sealed class Downloader
 
         var done = items.Count(x => x.DownloadStatus == "Downloaded");
         var failed = items.Count(x => x.DownloadStatus == "Failed");
-        log.Report($"下载队列结束：本轮候选组 {groups.Count} 组，资源记录 {items.Count} 条，已完成 {done} 条，失败 {failed} 条。");
+        log.Report($"下载阶段结束：本轮候选组 {groups.Count} 组，资源记录 {items.Count} 条，已完成 {done} 条，失败 {failed} 条。");
     }
 
     private async Task ProcessCandidateGroupAsync(CandidateGroup group, string configDir, object saveGate, CancellationToken ct)
