@@ -57,6 +57,15 @@ internal static class ModelCategoryUnifier
 
     public static int ReconcileSplitModels(AppState state, bool notify = true)
     {
+        var localCategoriesByModel = state.Database.LocalFiles
+            .Where(x => !string.IsNullOrWhiteSpace(x.Model))
+            .GroupBy(x => x.Model, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group
+                    .Select(x => LibraryPaths.NormalizeCategory(x.Category))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase),
+                StringComparer.OrdinalIgnoreCase);
         var groups = state.Database.Resources
             .Where(x => !string.IsNullOrWhiteSpace(x.Model))
             .GroupBy(x => x.Model, StringComparer.OrdinalIgnoreCase)
@@ -65,10 +74,9 @@ internal static class ModelCategoryUnifier
                 var target = SiteCategoryClassifier.ResolveModelCategory(g);
                 return g.Any(x => !LibraryPaths.NormalizeCategory(x.Category)
                            .Equals(target, StringComparison.OrdinalIgnoreCase)) ||
-                       state.Database.LocalFiles.Any(x =>
-                           x.Model.Equals(g.Key, StringComparison.OrdinalIgnoreCase) &&
-                           !LibraryPaths.NormalizeCategory(x.Category)
-                               .Equals(target, StringComparison.OrdinalIgnoreCase));
+                       localCategoriesByModel.TryGetValue(g.Key, out var localCategories) &&
+                       localCategories.Any(category =>
+                           !category.Equals(target, StringComparison.OrdinalIgnoreCase));
             })
             .ToArray();
         var changed = 0;

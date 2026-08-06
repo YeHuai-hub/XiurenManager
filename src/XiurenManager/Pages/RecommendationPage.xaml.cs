@@ -90,22 +90,36 @@ public partial class RecommendationPage : Page
     {
         var candidates = state.Database.LocalFiles
             .Where(IsEligible)
-            .ToArray();
-        if (recommendation != null && candidates.Length > 1)
+            .ToList();
+        if (recommendation != null && candidates.Count > 1)
         {
             candidates = candidates
                 .Where(item => !SameSet(item, recommendation))
-                .ToArray();
+                .ToList();
         }
 
-        if (candidates.Length == 0)
+        LocalStat? selected = null;
+        while (candidates.Count > 0)
+        {
+            var index = Random.Shared.Next(candidates.Count);
+            var candidate = candidates[index];
+            candidates[index] = candidates[^1];
+            candidates.RemoveAt(candidates.Count - 1);
+            if (HasUsableMedia(candidate))
+            {
+                selected = candidate;
+                break;
+            }
+        }
+
+        if (selected == null)
         {
             recommendation = null;
             ShowEmpty();
             return;
         }
 
-        recommendation = candidates[Random.Shared.Next(candidates.Length)];
+        recommendation = selected;
         ShowRecommendation(recommendation);
         await LoadRecommendationVisualsAsync(recommendation);
     }
@@ -355,14 +369,12 @@ public partial class RecommendationPage : Page
         e.Handled = true;
     }
 
-    private bool IsEligible(LocalStat item)
-    {
-        if (!Directory.Exists(item.LocalDir) ||
-            item.ImageCount + item.VideoCount + item.InvalidVideoCount <= 0)
-        {
-            return false;
-        }
+    private static bool IsEligible(LocalStat item) =>
+        Directory.Exists(item.LocalDir) &&
+        item.ImageCount + item.VideoCount > 0;
 
+    private bool HasUsableMedia(LocalStat item)
+    {
         try
         {
             var extensions = state.Settings.ImageExts

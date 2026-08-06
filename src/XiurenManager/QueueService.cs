@@ -22,7 +22,17 @@ internal sealed class QueueService
             job.Error = "应用上次退出时任务仍在运行，可点击继续队列恢复。";
             job.FinishedAt = DateTime.Now.ToString("s");
         }
-        if (interrupted.Count > 0) state.Database.Save();
+        if (interrupted.Count > 0)
+        {
+            try
+            {
+                state.Database.Save();
+            }
+            catch (IOException ex)
+            {
+                state.WriteLog("启动时无法保存中断任务状态，程序将继续以当前数据启动: " + ex.Message);
+            }
+        }
     }
 
     public JobItem Enqueue(
