@@ -140,13 +140,17 @@ internal sealed class QueueService
     private async Task RunAsync()
     {
         if (Interlocked.CompareExchange(ref processing, 1, 0) != 0) return;
-        state.Storage.YieldForDownloads();
-        while (state.Storage.IsRunning)
-            await Task.Delay(500);
-        stopRequested = false;
-        state.NotifyJobsChanged();
         try
         {
+            state.Storage.YieldForDownloads();
+            while (state.Storage.IsRunning)
+            {
+                if (stopRequested) return;
+                await Task.Delay(250);
+            }
+            if (stopRequested) return;
+            state.NotifyJobsChanged();
+
             while (!stopRequested)
             {
                 var job = state.Database.Jobs.LastOrDefault(IsQueued);
@@ -429,7 +433,7 @@ internal sealed class QueueService
 
     private async Task ScanAsync(CancellationToken token)
     {
-        await Task.Run(() => LocalScanner.Scan(state), token);
+        await Task.Run(() => LocalScanner.Scan(state, token: token), token);
     }
 
     private IProgress<string> Progress() => new Progress<string>(state.WriteLog);

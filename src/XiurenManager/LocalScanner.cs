@@ -4,8 +4,12 @@ namespace XiurenManager;
 
 internal static class LocalScanner
 {
-    public static void Scan(AppState state, bool notify = true)
+    public static void Scan(
+        AppState state,
+        bool notify = true,
+        CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         var root = state.Settings.DownloadRoot;
         Directory.CreateDirectory(root);
         foreach (var category in LibraryPaths.Categories(state.Settings))
@@ -22,7 +26,8 @@ internal static class LocalScanner
             videoExts,
             results,
             state,
-            overwrite: true);
+            overwrite: true,
+            token);
 
         var archiveRoot = state.Settings.ArchiveRoot;
         if (!string.IsNullOrWhiteSpace(archiveRoot))
@@ -36,7 +41,8 @@ internal static class LocalScanner
                     videoExts,
                     results,
                     state,
-                    overwrite: false);
+                    overwrite: false,
+                    token);
             }
             else
             {
@@ -62,15 +68,17 @@ internal static class LocalScanner
                 results,
                 state,
                 overwrite: false,
-                storageTier: StorageTiers.Local);
+                storageTier: StorageTiers.Local,
+                token);
         }
 
+        token.ThrowIfCancellationRequested();
         state.Database.LocalFiles = results.Values
             .OrderBy(x => x.Category, StringComparer.OrdinalIgnoreCase)
             .ThenBy(x => x.Model, StringComparer.OrdinalIgnoreCase)
             .ThenBy(x => x.Title, StringComparer.OrdinalIgnoreCase)
             .ToList();
-        ReconcileResourceLocations(state);
+        ReconcileResourceLocations(state, token);
         state.Database.Save();
         var localCount = results.Values.Count(x => x.StorageTier == StorageTiers.Local);
         var archiveCount = results.Count - localCount;
@@ -79,10 +87,11 @@ internal static class LocalScanner
             state.NotifyDataChanged();
     }
 
-    private static void ReconcileResourceLocations(AppState state)
+    private static void ReconcileResourceLocations(AppState state, CancellationToken token)
     {
         foreach (var resource in state.Database.Resources)
         {
+            token.ThrowIfCancellationRequested();
             var modernPath = LibraryPaths.SetRoot(
                 state.Settings,
                 resource.Category,
@@ -143,25 +152,35 @@ internal static class LocalScanner
         Dictionary<string, LocalStat> results,
         AppState state,
         bool overwrite = true,
-        string storageTier = StorageTiers.Local)
+        string storageTier = StorageTiers.Local,
+        CancellationToken token = default)
     {
         foreach (var modelDir in Directory.EnumerateDirectories(categoryRoot)
                      .Where(x => !AppPaths.IsInsideTool(x))
                      .Where(x => !Path.GetFileName(x).StartsWith('.')))
         {
+            token.ThrowIfCancellationRequested();
             var model = Path.GetFileName(modelDir);
             foreach (var setDir in Directory.EnumerateDirectories(modelDir)
                          .Where(x => !AppPaths.IsInsideTool(x)))
             {
+                token.ThrowIfCancellationRequested();
                 try
                 {
                     var files = Directory.EnumerateFiles(setDir, "*", SearchOption.AllDirectories)
                         .Where(x => !AppPaths.IsInsideTool(x))
-                        .Select(x => new FileInfo(x))
+                        .Select(x =>
+                        {
+                            token.ThrowIfCancellationRequested();
+                            return new FileInfo(x);
+                        })
                         .ToArray();
                     var videos = files.Where(x => videoExts.Contains(x.Extension)).ToArray();
                     var quickInvalid = videos.Count(x =>
-                        !VideoValidator.QuickHeaderLooksValid(x.FullName));
+                    {
+                        token.ThrowIfCancellationRequested();
+                        return !VideoValidator.QuickHeaderLooksValid(x.FullName);
+                    });
                     var invalidVideos = Math.Max(
                         quickInvalid,
                         VideoValidator.MarkedInvalidCount(setDir));
@@ -173,8 +192,11 @@ internal static class LocalScanner
                         LocalDir = setDir,
                         StorageTier = storageTier,
                         ImageCount = files.Count(x =>
-                            imageExts.Contains(x.Extension) &&
-                            MediaFileValidator.QuickImageHeaderLooksValid(x.FullName)),
+                        {
+                            token.ThrowIfCancellationRequested();
+                            return imageExts.Contains(x.Extension) &&
+                                   MediaFileValidator.QuickImageHeaderLooksValid(x.FullName);
+                        }),
                         VideoCount = Math.Max(0, videos.Length - invalidVideos),
                         InvalidVideoCount = invalidVideos,
                         TotalBytes = files.Sum(x => x.Length),
@@ -189,6 +211,10 @@ internal static class LocalScanner
                     }
                     else if (overwrite || !results.ContainsKey(key))
                         results[key] = item;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -205,11 +231,13 @@ internal static class LocalScanner
         HashSet<string> videoExts,
         Dictionary<string, LocalStat> results,
         AppState state,
-        bool overwrite)
+        bool overwrite,
+        CancellationToken token)
     {
         foreach (var categoryDir in Directory.EnumerateDirectories(root)
                      .Where(x => !AppPaths.IsInsideTool(x)))
         {
+            token.ThrowIfCancellationRequested();
             var category = Path.GetFileName(categoryDir);
             ScanCategory(
                 categoryDir,
@@ -219,7 +247,8 @@ internal static class LocalScanner
                 results,
                 state,
                 overwrite,
-                storageTier);
+                storageTier,
+                token);
         }
     }
 
