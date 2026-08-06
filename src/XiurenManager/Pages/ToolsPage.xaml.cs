@@ -80,9 +80,16 @@ public partial class ToolsPage : Page
         var current = string.IsNullOrWhiteSpace(value.CurrentModel)
             ? ""
             : $" · 当前 {value.CurrentModel} ({value.Phase})";
+        var progress = value.TotalBytes <= 0
+            ? ""
+            : $" · 进度 {value.CurrentFiles}/{value.TotalFiles}，" +
+              $"{StorageMigrationService.FormatBytes(value.CurrentBytes)}/" +
+              $"{StorageMigrationService.FormatBytes(value.TotalBytes)} " +
+              $"({Math.Clamp(value.CurrentBytes * 100d / value.TotalBytes, 0, 100):0.0}%)";
         MigrationStatus.Text =
             $"{enabled} · 状态 {value.Status}{current} · 本批 {value.LastBatchModels} 个模特 / " +
             StorageMigrationService.FormatBytes(value.LastBatchBytes) +
+            progress +
             (string.IsNullOrWhiteSpace(value.LastError) ? "" : " · " + value.LastError);
         MigrationCapacity.Text =
             $"本地可用 {StorageMigrationService.FormatBytes(value.LocalFreeBytes)} · " +

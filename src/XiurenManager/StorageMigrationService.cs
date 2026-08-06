@@ -58,6 +58,12 @@ internal sealed class StorageMigrationService : IDisposable
     {
         state.Settings.StorageManagementEnabled = true;
         state.Settings.Save();
+        if (IsRunning)
+        {
+            WriteLog("存储迁移已在运行，继续保持当前进度。");
+            RaiseStatusChanged();
+            return;
+        }
         UpdateStatus(LoadStatus() with
         {
             Status = "Pending",
@@ -349,6 +355,14 @@ internal sealed class StorageMigrationService : IDisposable
         Directory.CreateDirectory(parent);
         var temp = Path.Combine(parent, "." + Path.GetFileName(destination) + ".xiuren-migrating");
         Directory.CreateDirectory(temp);
+        var sourceFiles = Directory.EnumerateFiles(
+                model.Directory,
+                "*",
+                SearchOption.AllDirectories)
+            .Where(x => !AppPaths.IsInsideTool(x))
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var totalBytes = sourceFiles.Sum(x => new FileInfo(x).Length);
         UpdateStatus(LoadStatus() with
         {
             Status = "Copying",
@@ -358,26 +372,54 @@ internal sealed class StorageMigrationService : IDisposable
             SourcePath = model.Directory,
             DestinationPath = destination,
             TempPath = temp,
+            CurrentFiles = 0,
+            TotalFiles = sourceFiles.Length,
+            CurrentBytes = 0,
+            TotalBytes = totalBytes,
             LastRunAt = DateTime.Now.ToString("s"),
             LastError = ""
         });
         WriteLog($"开始整模特迁移: {model.Model} | {model.Directory} -> {destination}");
 
-        var sourceFiles = Directory.EnumerateFiles(
-                model.Directory,
-                "*",
-                SearchOption.AllDirectories)
-            .Where(x => !AppPaths.IsInsideTool(x))
-            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        var completedFiles = 0;
+        long completedBytes = 0;
+        var lastProgressAt = DateTime.MinValue;
         foreach (var sourceFile in sourceFiles)
         {
             token.ThrowIfCancellationRequested();
+            var fileLength = new FileInfo(sourceFile).Length;
+            long currentFileBytes = 0;
             var relative = Path.GetRelativePath(model.Directory, sourceFile);
             var targetFile = Path.Combine(temp, relative);
             Directory.CreateDirectory(Path.GetDirectoryName(targetFile)!);
-            await CopyAndVerifyAsync(sourceFile, targetFile, token);
+            await CopyAndVerifyAsync(sourceFile, targetFile, token, delta =>
+            {
+                currentFileBytes += delta;
+                if (DateTime.UtcNow - lastProgressAt < TimeSpan.FromSeconds(2) &&
+                    completedBytes + currentFileBytes < totalBytes)
+                    return;
+                lastProgressAt = DateTime.UtcNow;
+                UpdateStatus(LoadStatus() with
+                {
+                    Status = "Copying",
+                    Phase = "Copying",
+                    CurrentFiles = completedFiles,
+                    TotalFiles = sourceFiles.Length,
+                    CurrentBytes = Math.Min(totalBytes, completedBytes + currentFileBytes),
+                    TotalBytes = totalBytes,
+                    LastRunAt = DateTime.Now.ToString("s")
+                });
+            });
+            completedFiles++;
+            completedBytes += fileLength;
         }
+        UpdateStatus(LoadStatus() with
+        {
+            CurrentFiles = completedFiles,
+            TotalFiles = sourceFiles.Length,
+            CurrentBytes = completedBytes,
+            TotalBytes = totalBytes
+        });
         VerifyTree(model.Directory, temp);
 
         UpdateStatus(LoadStatus() with { Phase = "Verified", Status = "Verifying" });
@@ -387,9 +429,9 @@ internal sealed class StorageMigrationService : IDisposable
         UpdateTrackedPaths(model.Model, model.Directory, destination);
         state.Database.Save();
         state.Favorites.UpdateModelLocations(model.Model, model.Directory, destination);
-        UpdateStatus(LoadStatus() with { Phase = "DatabaseUpdated", Status = "CleaningSource" });
+        UpdateStatus(LoadStatus() with { Phase = "CleanupReady", Status = "CleaningSource" });
 
-        DeleteVerifiedSource(model.Directory);
+        await DeleteVerifiedSourceAsync(model.Directory, token);
         RemoveEmptyParents(model.Directory, settings);
         UpdateStatus(LoadStatus() with
         {
@@ -411,7 +453,7 @@ internal sealed class StorageMigrationService : IDisposable
             return;
 
         if (Directory.Exists(status.DestinationPath) && Directory.Exists(status.SourcePath) &&
-            status.Phase is "Verified" or "Finalized" or "DatabaseUpdated")
+            status.Phase is "Verified" or "Finalized" or "DatabaseUpdated" or "CleanupReady")
         {
             if (status.Phase == "DatabaseUpdated")
             {
@@ -428,10 +470,10 @@ internal sealed class StorageMigrationService : IDisposable
             UpdateTrackedPaths(model, status.SourcePath, status.DestinationPath);
             state.Database.Save();
             state.Favorites.UpdateModelLocations(model, status.SourcePath, status.DestinationPath);
-            status = status with { Phase = "DatabaseUpdated", Status = "CleaningSource" };
+            status = status with { Phase = "CleanupReady", Status = "CleaningSource" };
             UpdateStatus(status);
             token.ThrowIfCancellationRequested();
-            DeleteVerifiedSource(status.SourcePath);
+            await DeleteVerifiedSourceAsync(status.SourcePath, token);
             RemoveEmptyParents(status.SourcePath, settings);
             UpdateStatus(status with
             {
@@ -592,7 +634,8 @@ internal sealed class StorageMigrationService : IDisposable
     private static async Task CopyAndVerifyAsync(
         string source,
         string destination,
-        CancellationToken token)
+        CancellationToken token,
+        Action<long>? reportBytes = null)
     {
         var sourceInfo = new FileInfo(source);
         if (File.Exists(destination) && new FileInfo(destination).Length == sourceInfo.Length)
@@ -600,7 +643,10 @@ internal sealed class StorageMigrationService : IDisposable
             var existingSourceHash = await HashAsync(source, token);
             var existingDestinationHash = await HashAsync(destination, token);
             if (CryptographicOperations.FixedTimeEquals(existingSourceHash, existingDestinationHash))
+            {
+                reportBytes?.Invoke(sourceInfo.Length);
                 return;
+            }
         }
 
         var temp = destination + ".copying";
@@ -619,6 +665,7 @@ internal sealed class StorageMigrationService : IDisposable
             {
                 await output.WriteAsync(buffer.AsMemory(0, read), token);
                 hash.AppendData(buffer, 0, read);
+                reportBytes?.Invoke(read);
             }
             await output.FlushAsync(token);
             sourceHash = hash.GetHashAndReset();
@@ -682,18 +729,35 @@ internal sealed class StorageMigrationService : IDisposable
         }
     }
 
-    private static void DeleteVerifiedSource(string source)
+    private static async Task DeleteVerifiedSourceAsync(
+        string source,
+        CancellationToken token)
     {
-        foreach (var entry in Directory.EnumerateFileSystemEntries(
-                     source,
-                     "*",
-                     SearchOption.AllDirectories)
-                 .OrderByDescending(x => x.Length))
+        for (var attempt = 1; attempt <= 5; attempt++)
         {
-            File.SetAttributes(entry, FileAttributes.Normal);
+            token.ThrowIfCancellationRequested();
+            try
+            {
+                if (!Directory.Exists(source)) return;
+                foreach (var entry in Directory.EnumerateFileSystemEntries(
+                             source,
+                             "*",
+                             SearchOption.AllDirectories)
+                         .OrderByDescending(x => x.Length))
+                {
+                    File.SetAttributes(entry, FileAttributes.Normal);
+                }
+                File.SetAttributes(source, FileAttributes.Normal);
+                Directory.Delete(source, recursive: true);
+                return;
+            }
+            catch (Exception ex) when (
+                attempt < 5 &&
+                ex is IOException or UnauthorizedAccessException)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(attempt * 2), token);
+            }
         }
-        File.SetAttributes(source, FileAttributes.Normal);
-        Directory.Delete(source, recursive: true);
     }
 
     private static bool HasIncompleteFiles(string directory)
@@ -928,6 +992,10 @@ internal sealed record StorageMigrationStatus
     public long LocalTotalBytes { get; init; }
     public long ArchiveFreeBytes { get; init; }
     public long ArchiveTotalBytes { get; init; }
+    public int CurrentFiles { get; init; }
+    public int TotalFiles { get; init; }
+    public long CurrentBytes { get; init; }
+    public long TotalBytes { get; init; }
     public string LastRunAt { get; init; } = "";
     public string LastError { get; init; } = "";
 }
