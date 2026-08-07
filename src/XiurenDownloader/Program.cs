@@ -1991,13 +1991,13 @@ internal sealed class Downloader
                 }
 
                 var renamedOuterArchive = false;
-                if (ZipContainsSameNamedEntry(file))
+                if (file.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
                 {
                     var outerPath = BuildOuterArchivePath(file);
                     File.Move(file, outerPath);
                     file = outerPath;
                     renamedOuterArchive = true;
-                    log.Report("检测到同名嵌套压缩包，已安全避让外层文件: " + Path.GetFileName(archive));
+                    log.Report("解压 ZIP 前已安全避让外层文件: " + Path.GetFileName(archive));
                 }
 
                 var ok = false;
@@ -2027,23 +2027,6 @@ internal sealed class Downloader
         MoveSingleFolderUp(dir);
         DeleteZeroByteArchives(dir);
         DeleteInvalidMediaFiles(dir);
-    }
-
-    private static bool ZipContainsSameNamedEntry(string file)
-    {
-        if (!file.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) return false;
-        try
-        {
-            using var archive = ZipFile.OpenRead(file);
-            var fileName = Path.GetFileName(file);
-            return archive.Entries.Any(entry =>
-                !string.IsNullOrWhiteSpace(entry.Name) &&
-                Path.GetFileName(entry.FullName).Equals(fileName, StringComparison.OrdinalIgnoreCase));
-        }
-        catch (InvalidDataException)
-        {
-            return false;
-        }
     }
 
     private static string BuildOuterArchivePath(string file)
