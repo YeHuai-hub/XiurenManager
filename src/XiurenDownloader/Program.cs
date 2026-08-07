@@ -1722,6 +1722,17 @@ internal sealed class Downloader
                 log.Report("本地未发现完整文件，从网盘目录补下载: " + remoteItemDir);
                 await Proc(settings.BaiduPcsPath, ["d", remoteItemDir, "--saveto", titleDir.Replace('\\', '/'), "--ow"], AppPaths.ToolRoot, ct, configDir: configDir, watchLowSpeed: true);
             }
+            if (!HasArchives(titleDir) && !HasMedia(titleDir) &&
+                await RefreshPanLinkAfterTransferFailureAsync(item, ct))
+            {
+                log.Report("检测到网站已更换网盘链接，使用新链接重试: " + item.Title);
+                var retryArgs = new List<string> { "transfer", item.PanUrl };
+                retryArgs.Add(string.IsNullOrWhiteSpace(item.PanPassword) ? "" : item.PanPassword);
+                retryArgs.Add("--download");
+                await Proc(settings.BaiduPcsPath, retryArgs, AppPaths.ToolRoot, ct, allowFail: true, configDir: configDir, watchLowSpeed: true);
+                if (!HasArchives(titleDir) && !HasMedia(titleDir))
+                    await Proc(settings.BaiduPcsPath, ["d", remoteItemDir, "--saveto", titleDir.Replace('\\', '/'), "--ow"], AppPaths.ToolRoot, ct, configDir: configDir, watchLowSpeed: true);
+            }
             if (!HasArchives(titleDir) && !HasMedia(titleDir))
                 throw new InvalidOperationException("网盘转存/下载失败：没有下载到任何文件，可能是分享链接失效或页面不存在。");
 
@@ -1788,6 +1799,33 @@ internal sealed class Downloader
         }
     }
 
+    private async Task<bool> RefreshPanLinkAfterTransferFailureAsync(ResourceItem item, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(item.DetailUrl)) return false;
+        try
+        {
+            var previousPanUrl = item.PanUrl;
+            var refreshed = await new XiurenClient(settings).RefreshDetailAsync(item, ct);
+            if (string.IsNullOrWhiteSpace(refreshed.PanUrl) ||
+                refreshed.PanUrl.Equals(previousPanUrl, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            item.PanUrl = refreshed.PanUrl;
+            if (!string.IsNullOrWhiteSpace(refreshed.PanPassword))
+                item.PanPassword = refreshed.PanPassword;
+            if (!string.IsNullOrWhiteSpace(refreshed.ExtractPassword))
+                item.ExtractPassword = refreshed.ExtractPassword;
+            item.Status = "Ready";
+            item.LastChecked = DateTime.Now.ToString("s");
+            return true;
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            log.Report("下载失败后刷新详情仍不可用: " + item.Title + " | " + ErrorText.Format(ex).Replace(Environment.NewLine, " | "));
+            return false;
+        }
+    }
+
     private static bool NeedsExtractPasswordRefresh(ResourceItem item)
     {
         var password = (item.ExtractPassword ?? "").Trim();
@@ -1806,7 +1844,7 @@ internal sealed class Downloader
             .GroupBy(
                 x => LibraryPaths.NormalizeCategory(x.Category) + "|" +
                      XiurenClient.Safe(x.Model) + "|" +
-                     ResourceKey(x.Title),
+                     ResourceKey(x.Title) + "|" + ResourceVariantKey(x.Title),
                 StringComparer.OrdinalIgnoreCase)
             .Select(g => new CandidateGroup
             {
@@ -1952,6 +1990,16 @@ internal sealed class Downloader
                     file = inner;
                 }
 
+                var renamedOuterArchive = false;
+                if (ZipContainsSameNamedEntry(file))
+                {
+                    var outerPath = BuildOuterArchivePath(file);
+                    File.Move(file, outerPath);
+                    file = outerPath;
+                    renamedOuterArchive = true;
+                    log.Report("检测到同名嵌套压缩包，已安全避让外层文件: " + Path.GetFileName(archive));
+                }
+
                 var ok = false;
                 var inputName = Path.GetRelativePath(dir, file);
                 foreach (var password in Passwords(passwords))
@@ -1961,8 +2009,14 @@ internal sealed class Downloader
                     var args = new List<string> { "x", "-y", "-aoa", "-o.", inputName, "-p" + password };
                     if (await Proc(settings.SevenZipPath, args, dir, ct, true) == 0) { ok = true; break; }
                 }
-                if (!ok) throw new InvalidOperationException("解压失败: " + Path.GetFileName(file));
-                processed.Add(archive);
+                if (!ok)
+                {
+                    if (renamedOuterArchive && !File.Exists(archive))
+                        File.Move(file, archive);
+                    throw new InvalidOperationException("解压失败: " + Path.GetFileName(archive));
+                }
+                if (!renamedOuterArchive)
+                    processed.Add(archive);
                 processed.Add(file);
                 extractedAny = true;
             }
@@ -1973,6 +2027,34 @@ internal sealed class Downloader
         MoveSingleFolderUp(dir);
         DeleteZeroByteArchives(dir);
         DeleteInvalidMediaFiles(dir);
+    }
+
+    private static bool ZipContainsSameNamedEntry(string file)
+    {
+        if (!file.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) return false;
+        try
+        {
+            using var archive = ZipFile.OpenRead(file);
+            var fileName = Path.GetFileName(file);
+            return archive.Entries.Any(entry =>
+                !string.IsNullOrWhiteSpace(entry.Name) &&
+                Path.GetFileName(entry.FullName).Equals(fileName, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (InvalidDataException)
+        {
+            return false;
+        }
+    }
+
+    private static string BuildOuterArchivePath(string file)
+    {
+        var directory = Path.GetDirectoryName(file)!;
+        var extension = Path.GetExtension(file);
+        var stem = Path.GetFileNameWithoutExtension(file);
+        var candidate = Path.Combine(directory, stem + ".outer" + extension);
+        for (var suffix = 2; File.Exists(candidate); suffix++)
+            candidate = Path.Combine(directory, stem + $".outer-{suffix}" + extension);
+        return candidate;
     }
 
     private IEnumerable<string> Passwords(string value)
@@ -2250,11 +2332,13 @@ internal sealed class Downloader
                 return modelDir;
         }
         var key = ResourceKey(title);
+        var variant = ResourceVariantKey(title);
         foreach (var dir in Directory.GetDirectories(modelDir).Where(x => !AppPaths.IsInsideTool(x)))
         {
             if (!VideoValidator.HasInvalidMarker(dir) &&
                 HasMedia(dir) &&
-                (Path.GetFileName(dir).Equals(XiurenClient.Safe(title), StringComparison.OrdinalIgnoreCase) || ResourceKey(Path.GetFileName(dir)) == key))
+                (Path.GetFileName(dir).Equals(XiurenClient.Safe(title), StringComparison.OrdinalIgnoreCase) ||
+                 (ResourceKey(Path.GetFileName(dir)) == key && ResourceVariantKey(Path.GetFileName(dir)) == variant)))
                 return dir;
         }
         return null;
@@ -2277,6 +2361,14 @@ internal sealed class Downloader
         var m = Regex.Match(title, @"\b(?:NO\.?|No\.?|VOL\.?)\s*(\d+)", RegexOptions.IgnoreCase);
         if (m.Success) return m.Groups[1].Value.TrimStart('0');
         return Regex.Replace(title, @"[\s\[\]【】（）()／/_.\-]+", "", RegexOptions.IgnoreCase).ToUpperInvariant();
+    }
+
+    private static string ResourceVariantKey(string title)
+    {
+        var hasPhotoCount = Regex.IsMatch(title, @"\d+\s*(?:\+\s*)?P\b", RegexOptions.IgnoreCase);
+        var hasVideoCount = Regex.IsMatch(title, @"\d+\s*(?:\+\s*)?V\b", RegexOptions.IgnoreCase) ||
+                            Regex.IsMatch(title, @"视频|video|mp4", RegexOptions.IgnoreCase);
+        return hasVideoCount && !hasPhotoCount ? "video-only" : "standard";
     }
 
     private static void MoveSingleFolderUp(string dir)
