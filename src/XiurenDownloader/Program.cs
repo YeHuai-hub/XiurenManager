@@ -1676,6 +1676,7 @@ internal sealed class Downloader
         try
         {
             Directory.CreateDirectory(titleDir);
+            ClearReadOnlyAttributes(titleDir);
             if (VideoValidator.HasInvalidMarker(titleDir))
             {
                 var removed = VideoValidator.DeleteMarkedInvalidFiles(titleDir);
@@ -1880,6 +1881,7 @@ internal sealed class Downloader
         await ExtractionGate.WaitAsync(ct);
         try
         {
+            ClearReadOnlyAttributes(titleDir);
             NormalizeUnknownFileExtensions(titleDir);
             MoveSingleFolderUp(titleDir);
             NormalizeUnknownFileExtensions(titleDir);
@@ -2066,6 +2068,24 @@ internal sealed class Downloader
                      !mediaExts.Contains(Path.GetExtension(f)) &&
                      !IsArchive(f)))
             Try(() => File.Delete(f));
+    }
+
+    private static void ClearReadOnlyAttributes(string dir)
+    {
+        if (!Directory.Exists(dir)) return;
+        foreach (var file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+        {
+            try
+            {
+                var attributes = File.GetAttributes(file);
+                if ((attributes & FileAttributes.ReadOnly) != 0)
+                    File.SetAttributes(file, attributes & ~FileAttributes.ReadOnly);
+            }
+            catch
+            {
+                // A locked file is handled by the normal retry/error path.
+            }
+        }
     }
 
     private void NormalizeUnknownFileExtensions(string dir)
