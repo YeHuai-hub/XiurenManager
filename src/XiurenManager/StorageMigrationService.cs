@@ -428,6 +428,7 @@ internal sealed class StorageMigrationService : IDisposable
                     delta => ReportProgress(delta));
                 ReportProgress(0, fileCompleted: true);
             });
+        RemoveDestinationExtras(model.Directory, temp);
         UpdateStatus(LoadStatus() with
         {
             CurrentFiles = completedFiles,
@@ -712,6 +713,37 @@ internal sealed class StorageMigrationService : IDisposable
         if (sourceFiles.Count != destinationFiles.Count ||
             sourceFiles.Any(x => !destinationFiles.TryGetValue(x.Key, out var length) || length != x.Value))
             throw new IOException("目录校验失败，源目录仍会保留: " + source);
+    }
+
+    private static void RemoveDestinationExtras(string source, string destination)
+    {
+        var sourceFiles = Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories)
+            .Select(x => Path.GetRelativePath(source, x))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var destinationFile in Directory.EnumerateFiles(
+                     destination,
+                     "*",
+                     SearchOption.AllDirectories))
+        {
+            if (destinationFile.EndsWith(".copying", StringComparison.OrdinalIgnoreCase))
+            {
+                File.Delete(destinationFile);
+                continue;
+            }
+            var relative = Path.GetRelativePath(destination, destinationFile);
+            if (!sourceFiles.Contains(relative))
+                File.Delete(destinationFile);
+        }
+
+        foreach (var directory in Directory.EnumerateDirectories(
+                     destination,
+                     "*",
+                     SearchOption.AllDirectories)
+                 .OrderByDescending(x => x.Length))
+        {
+            if (!Directory.EnumerateFileSystemEntries(directory).Any())
+                Directory.Delete(directory);
+        }
     }
 
     private static async Task VerifyRemainingSourceAsync(

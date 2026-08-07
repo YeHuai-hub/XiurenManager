@@ -14,12 +14,14 @@ $localRoot = Join-Path $base "local"
 $archiveRoot = Join-Path $archiveBase "archive"
 $setRoot = Join-Path $localRoot "TestCategory\CompleteModel\SetA"
 $blockedSet = Join-Path $localRoot "TestCategory\BlockedModel\SetB"
+$staleTempSet = Join-Path $archiveRoot "TestCategory\.CompleteModel.xiuren-migrating\SetA"
 @(
     (Join-Path $dataRoot "config"),
     (Join-Path $dataRoot "data"),
     (Join-Path $dataRoot "logs"),
     $setRoot,
     $blockedSet,
+    $staleTempSet,
     $archiveRoot
 ) | ForEach-Object { [IO.Directory]::CreateDirectory($_) | Out-Null }
 
@@ -32,6 +34,12 @@ $blockedSet = Join-Path $localRoot "TestCategory\BlockedModel\SetB"
 [IO.File]::WriteAllText(
     (Join-Path $blockedSet "archive.zip.BaiduPCS-Go-downloading"),
     "partial")
+[IO.File]::WriteAllText(
+    (Join-Path $staleTempSet "Thumbs.db"),
+    "stale-system-file")
+[IO.File]::WriteAllText(
+    (Join-Path $staleTempSet "abandoned.jpg.copying"),
+    "abandoned-partial-file")
 
 $settings = [ordered]@{
     DownloadRoot = $localRoot
@@ -184,6 +192,8 @@ $result = [ordered]@{
     SourceRemoved = !(Test-Path -LiteralPath (Join-Path $localRoot "TestCategory\CompleteModel"))
     TargetExists = Test-Path -LiteralPath $targetSet
     TargetFileCount = @(Get-ChildItem -LiteralPath $targetSet -File -Recurse).Count
+    StaleTempRemoved = !(Test-Path -LiteralPath (Join-Path $targetSet "Thumbs.db"))
+    AbandonedCopyRemoved = !(Test-Path -LiteralPath (Join-Path $targetSet "abandoned.jpg.copying"))
     DbPathUpdated = [string]$completeLocal.LocalDir -eq $targetSet
     DbTierUpdated = [string]$completeLocal.StorageTier -eq "NAS"
     ResourcePathUpdated = [string]$completeResource.LocalDir -eq $targetSet
