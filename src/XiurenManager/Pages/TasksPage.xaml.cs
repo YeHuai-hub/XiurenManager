@@ -8,10 +8,16 @@ namespace XiurenManager.Pages;
 internal sealed class TaskRow
 {
     public required JobItem Item { get; init; }
-    public string Status => Item.Status.Equals("Running", StringComparison.OrdinalIgnoreCase) &&
-                            !string.IsNullOrWhiteSpace(Item.Stage)
-        ? $"Running · {Item.Stage}"
-        : Item.Status;
+    public string Status => Item.Status switch
+    {
+        "Queued" => "等待中",
+        "Running" when !string.IsNullOrWhiteSpace(Item.Stage) => $"执行中 · {Item.Stage}",
+        "Running" => "执行中",
+        "Done" => "已完成",
+        "Failed" => "失败",
+        "Canceled" => "已停止",
+        _ => Item.Status
+    };
     public string Label => QueueService.Label(Item);
     public string Target => Item.Target;
     public string Aliases => Item.Aliases;

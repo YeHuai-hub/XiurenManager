@@ -1476,6 +1476,16 @@ internal sealed class XiurenClient
     private static bool IsVideo(string title) => Regex.IsMatch(title, @"\b(mp4|视频|剧情|分钟)\b", RegexOptions.IgnoreCase);
 }
 
+internal sealed record DownloadRunResult(
+    int TotalGroups,
+    int CompletedGroups,
+    int FailedGroups,
+    int DeferredGroups)
+{
+    public static DownloadRunResult Empty { get; } = new(0, 0, 0, 0);
+    public bool IsComplete => FailedGroups == 0 && DeferredGroups == 0;
+}
+
 internal sealed class Downloader
 {
     private readonly Settings settings;
@@ -1504,12 +1514,14 @@ internal sealed class Downloader
         this.log = log;
     }
 
-    public async Task RunAsync(IEnumerable<ResourceItem> resources, CancellationToken ct)
+    public async Task<DownloadRunResult> RunAsync(
+        IEnumerable<ResourceItem> resources,
+        CancellationToken ct)
     {
         Need(settings.BaiduPcsPath, "BaiduPCS-Go");
         Need(settings.SevenZipPath, "7-Zip");
         var items = resources.Where(x => !string.IsNullOrWhiteSpace(x.PanUrl)).ToList();
-        if (items.Count == 0) return;
+        if (items.Count == 0) return DownloadRunResult.Empty;
         var groups = BuildCandidateGroups(items);
 
         var parallel = Math.Clamp(settings.DownloadParallelism, 1, 5);
@@ -1556,9 +1568,18 @@ internal sealed class Downloader
         });
         await Task.WhenAll(workers);
 
-        var done = items.Count(x => x.DownloadStatus == "Downloaded");
-        var failed = items.Count(x => x.DownloadStatus == "Failed");
-        log.Report($"下载阶段结束：本轮候选组 {groups.Count} 组，资源记录 {items.Count} 条，已完成 {done} 条，失败 {failed} 条。");
+        var completedGroups = groups.Count(x => x.Items.Any(item =>
+            item.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase)));
+        var failedGroups = groups.Count(x => x.Items.All(item =>
+            item.DownloadStatus.Equals("Failed", StringComparison.OrdinalIgnoreCase)));
+        var deferredGroups = groups.Count - completedGroups - failedGroups;
+        log.Report(
+            $"下载阶段结束：候选组 {groups.Count} 组，成功 {completedGroups} 组，失败 {failedGroups} 组，待继续 {deferredGroups} 组。");
+        return new DownloadRunResult(
+            groups.Count,
+            completedGroups,
+            failedGroups,
+            deferredGroups);
     }
 
     private async Task ProcessCandidateGroupAsync(CandidateGroup group, string configDir, object saveGate, CancellationToken ct)

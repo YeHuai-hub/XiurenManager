@@ -23,7 +23,17 @@ internal sealed class QueueService
             job.Error = "应用上次退出时任务仍在运行，可点击继续队列恢复。";
             job.FinishedAt = DateTime.Now.ToString("s");
         }
-        if (interrupted.Count > 0)
+        var incorrectlyCompleted = state.Database.Jobs.Where(x =>
+                x.Status.Equals("Done", StringComparison.OrdinalIgnoreCase) &&
+                HasPendingForJob(x))
+            .ToList();
+        foreach (var job in incorrectlyCompleted)
+        {
+            job.Status = "Failed";
+            job.Stage = "";
+            job.Error = "任务仍有未完成资源，可点击继续队列恢复。";
+        }
+        if (interrupted.Count > 0 || incorrectlyCompleted.Count > 0)
         {
             try
             {
@@ -75,26 +85,30 @@ internal sealed class QueueService
         }
 
         var database = state.Database;
-        var job = database.Jobs.FirstOrDefault(x =>
-            x.Status.Equals("Canceled", StringComparison.OrdinalIgnoreCase));
-        if (job == null && !database.Jobs.Any(IsQueued))
-            job = database.Jobs.FirstOrDefault(x =>
-                x.Status.Equals("Failed", StringComparison.OrdinalIgnoreCase));
+        var jobs = database.Jobs.Where(x =>
+                x.Status.Equals("Canceled", StringComparison.OrdinalIgnoreCase) ||
+                x.Status.Equals("Failed", StringComparison.OrdinalIgnoreCase))
+            .ToList();
 
-        if (job != null)
+        if (jobs.Count > 0)
         {
-            if (job.Type == "SearchDownload" &&
-                HasPendingForModel(job.Target, job.DownloadCategory))
+            foreach (var job in jobs)
             {
-                job.Type = "DownloadModelReady";
-                state.WriteLog($"检测到“{job.Target}”已有入库链接，继续操作将直接恢复未完成下载，不再从头搜索。");
+                if (job.Type == "SearchDownload" &&
+                    HasPendingForModel(
+                        job.Target,
+                        job.DownloadCategory,
+                        job.Exclusions))
+                {
+                    job.Type = "DownloadModelReady";
+                }
+                job.Status = "Queued";
+                job.Stage = "";
+                job.FinishedAt = "";
+                job.Error = "";
             }
-            job.Status = "Queued";
-            job.Stage = "";
-            job.FinishedAt = "";
-            job.Error = "";
             database.Save();
-            state.WriteLog("已恢复任务: " + Label(job));
+            state.WriteLog($"已恢复 {jobs.Count} 个任务；已有入库链接的搜索任务将直接续传，不会从头搜索。");
             state.NotifyJobsChanged();
         }
         else if (!database.Jobs.Any(IsQueued))
@@ -214,9 +228,10 @@ internal sealed class QueueService
             if (job.Type == "SearchDownload")
             {
                 SetStage(job, "下载与解压");
-                await new Downloader(state.Settings, state.Database, Progress()).RunAsync(resources, token);
+                var result = await new Downloader(state.Settings, state.Database, Progress()).RunAsync(resources, token);
                 SetStage(job, "刷新媒体库");
                 await ScanAsync(resources, token);
+                EnsureDownloadComplete(result);
             }
             return;
         }
@@ -230,9 +245,10 @@ internal sealed class QueueService
                 .ToList();
             state.WriteLog($"下载全部分类就绪未完成项: {resources.Count} 条");
             SetStage(job, "下载与解压");
-            await new Downloader(state.Settings, state.Database, Progress()).RunAsync(resources, token);
+            var result = await new Downloader(state.Settings, state.Database, Progress()).RunAsync(resources, token);
             SetStage(job, "刷新媒体库");
             await ScanAsync(resources, token);
+            EnsureDownloadComplete(result);
             return;
         }
 
@@ -248,9 +264,10 @@ internal sealed class QueueService
                 .ToList();
             state.WriteLog($"续传“{category}”分类本地未完成项：{resources.Count} 条。");
             SetStage(job, "下载与解压");
-            await new Downloader(state.Settings, state.Database, Progress()).RunAsync(resources, token);
+            var result = await new Downloader(state.Settings, state.Database, Progress()).RunAsync(resources, token);
             SetStage(job, "刷新媒体库");
             await ScanAsync(resources, token);
+            EnsureDownloadComplete(result);
             return;
         }
 
@@ -268,9 +285,10 @@ internal sealed class QueueService
                 .ToList();
             state.WriteLog($"恢复“{model}”未完成下载: {resources.Count} 条");
             SetStage(job, "下载与解压");
-            await new Downloader(state.Settings, state.Database, Progress()).RunAsync(resources, token);
+            var result = await new Downloader(state.Settings, state.Database, Progress()).RunAsync(resources, token);
             SetStage(job, "刷新媒体库");
             await ScanAsync(resources, token);
+            EnsureDownloadComplete(result);
             return;
         }
 
@@ -383,16 +401,51 @@ internal sealed class QueueService
         state.NotifyJobsChanged();
     }
 
-    private bool HasPendingForModel(string modelName, string categoryName)
+    private bool HasPendingForModel(
+        string modelName,
+        string categoryName,
+        string exclusionsText = "")
     {
         var model = XiurenClient.Safe(modelName.Trim());
         var category = LibraryPaths.NormalizeCategory(categoryName);
+        var exclusions = XiurenClient.ExclusionTerms(exclusionsText);
         return state.Database.Resources.Any(x =>
             x.Category.Equals(category, StringComparison.OrdinalIgnoreCase) &&
             x.Model.Equals(model, StringComparison.OrdinalIgnoreCase) &&
             x.Status.Equals("Ready", StringComparison.OrdinalIgnoreCase) &&
             !x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase) &&
-            !string.IsNullOrWhiteSpace(x.PanUrl));
+            !string.IsNullOrWhiteSpace(x.PanUrl) &&
+            string.IsNullOrWhiteSpace(XiurenClient.MatchExclusion(x.Title, exclusions)));
+    }
+
+    private bool HasPendingForJob(JobItem job)
+    {
+        if (job.Type is "SearchDownload" or "DownloadModelReady")
+            return HasPendingForModel(
+                job.Target,
+                job.DownloadCategory,
+                job.Exclusions);
+        if (job.Type == "DownloadReady")
+            return state.Database.Resources.Any(x =>
+                x.Status.Equals("Ready", StringComparison.OrdinalIgnoreCase) &&
+                !x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(x.PanUrl));
+        if (job.Type == "ResumeIncomplete")
+            return state.Database.Resources.Any(x =>
+                x.Category.Equals(job.DownloadCategory, StringComparison.OrdinalIgnoreCase) &&
+                x.Status.Equals("Ready", StringComparison.OrdinalIgnoreCase) &&
+                !x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(x.PanUrl) &&
+                HasIncompleteLocalDownload(x));
+        return false;
+    }
+
+    private static void EnsureDownloadComplete(DownloadRunResult result)
+    {
+        if (result.IsComplete) return;
+        throw new InvalidOperationException(
+            $"下载未全部完成：共 {result.TotalGroups} 组，成功 {result.CompletedGroups} 组，" +
+            $"失败 {result.FailedGroups} 组，待继续 {result.DeferredGroups} 组。可点击继续队列重试。" );
     }
 
     private static bool HasIncompleteLocalDownload(ResourceItem item)
