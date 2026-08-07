@@ -175,6 +175,10 @@ internal sealed class QueueService
                 cancellation = new CancellationTokenSource();
                 job.Status = "Running";
                 job.Stage = "准备";
+                job.ProgressTotal = 0;
+                job.ProgressCompleted = 0;
+                job.ProgressFailed = 0;
+                job.ProgressDeferred = 0;
                 job.Error = "";
                 state.Database.Save();
                 state.WriteLog("开始任务: " + Label(job));
@@ -228,7 +232,7 @@ internal sealed class QueueService
             if (job.Type == "SearchDownload")
             {
                 SetStage(job, "下载与解压");
-                var result = await new Downloader(state.Settings, state.Database, Progress()).RunAsync(resources, token);
+                var result = await Downloader(job).RunAsync(resources, token);
                 SetStage(job, "刷新媒体库");
                 await ScanAsync(resources, token);
                 EnsureDownloadComplete(result);
@@ -245,7 +249,7 @@ internal sealed class QueueService
                 .ToList();
             state.WriteLog($"下载全部分类就绪未完成项: {resources.Count} 条");
             SetStage(job, "下载与解压");
-            var result = await new Downloader(state.Settings, state.Database, Progress()).RunAsync(resources, token);
+            var result = await Downloader(job).RunAsync(resources, token);
             SetStage(job, "刷新媒体库");
             await ScanAsync(resources, token);
             EnsureDownloadComplete(result);
@@ -264,7 +268,7 @@ internal sealed class QueueService
                 .ToList();
             state.WriteLog($"续传“{category}”分类本地未完成项：{resources.Count} 条。");
             SetStage(job, "下载与解压");
-            var result = await new Downloader(state.Settings, state.Database, Progress()).RunAsync(resources, token);
+            var result = await Downloader(job).RunAsync(resources, token);
             SetStage(job, "刷新媒体库");
             await ScanAsync(resources, token);
             EnsureDownloadComplete(result);
@@ -285,7 +289,7 @@ internal sealed class QueueService
                 .ToList();
             state.WriteLog($"恢复“{model}”未完成下载: {resources.Count} 条");
             SetStage(job, "下载与解压");
-            var result = await new Downloader(state.Settings, state.Database, Progress()).RunAsync(resources, token);
+            var result = await Downloader(job).RunAsync(resources, token);
             SetStage(job, "刷新媒体库");
             await ScanAsync(resources, token);
             EnsureDownloadComplete(result);
@@ -522,6 +526,25 @@ internal sealed class QueueService
     private void SetStage(JobItem job, string stage)
     {
         job.Stage = stage;
+        state.Database.Save();
+        state.NotifyJobsChanged();
+    }
+
+    private Downloader Downloader(JobItem job)
+    {
+        return new Downloader(
+            state.Settings,
+            state.Database,
+            Progress(),
+            value => UpdateDownloadProgress(job, value));
+    }
+
+    private void UpdateDownloadProgress(JobItem job, DownloadProgressSnapshot value)
+    {
+        job.ProgressTotal = value.TotalGroups;
+        job.ProgressCompleted = value.CompletedGroups;
+        job.ProgressFailed = value.FailedGroups;
+        job.ProgressDeferred = value.DeferredGroups;
         state.Database.Save();
         state.NotifyJobsChanged();
     }

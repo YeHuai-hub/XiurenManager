@@ -19,12 +19,23 @@ internal sealed class TaskRow
         _ => Item.Status
     };
     public string Label => QueueService.Label(Item);
+    public string Progress => ProgressText(Item);
     public string Target => Item.Target;
     public string Aliases => Item.Aliases;
     public string Exclusions => Item.Exclusions;
     public string StartedAt => Item.StartedAt.Replace('T', ' ');
     public string FinishedAt => Item.FinishedAt.Replace('T', ' ');
     public string Error => Item.Error.Replace(Environment.NewLine, " | ");
+
+    private static string ProgressText(JobItem item)
+    {
+        if (item.ProgressTotal <= 0) return item.Stage == "搜索" ? "正在搜索资源" : "";
+        var remaining = Math.Max(0, item.ProgressTotal - item.ProgressCompleted);
+        var value = $"已下载 {item.ProgressCompleted}/{item.ProgressTotal} · 未下载 {remaining}";
+        if (item.ProgressFailed > 0) value += $" · 失败 {item.ProgressFailed}";
+        if (item.ProgressDeferred > 0) value += $" · 待继续 {item.ProgressDeferred}";
+        return value;
+    }
 }
 
 public partial class TasksPage : Page
@@ -68,6 +79,33 @@ public partial class TasksPage : Page
         var running = rows.Count(x => x.Status.Equals("Running", StringComparison.OrdinalIgnoreCase));
         var queued = rows.Count(x => x.Status.Equals("Queued", StringComparison.OrdinalIgnoreCase));
         TaskSummary.Text = $"{running} 个执行中  ·  {queued} 个等待  ·  {rows.Count} 条任务记录";
+
+        var progressJob = state.Database.Jobs.FirstOrDefault(x =>
+                              x.Status.Equals("Running", StringComparison.OrdinalIgnoreCase) &&
+                              x.ProgressTotal > 0)
+                          ?? state.Database.Jobs.FirstOrDefault(x =>
+                              x.ProgressTotal > 0 &&
+                              !x.Status.Equals("Done", StringComparison.OrdinalIgnoreCase))
+                          ?? state.Database.Jobs.FirstOrDefault(x => x.ProgressTotal > 0);
+        if (progressJob == null)
+        {
+            DownloadProgressPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var remaining = Math.Max(0, progressJob.ProgressTotal - progressJob.ProgressCompleted);
+        var percent = progressJob.ProgressTotal == 0
+            ? 0
+            : progressJob.ProgressCompleted * 100d / progressJob.ProgressTotal;
+        DownloadProgressPanel.Visibility = Visibility.Visible;
+        DownloadProgressTitle.Text = QueueService.Label(progressJob);
+        DownloadProgressPercent.Text = $"{percent:0.0}%";
+        DownloadProgressBar.Maximum = Math.Max(1, progressJob.ProgressTotal);
+        DownloadProgressBar.Value = progressJob.ProgressCompleted;
+        DownloadProgressDetail.Text =
+            $"总计 {progressJob.ProgressTotal} 套 · 已下载 {progressJob.ProgressCompleted} 套 · 未下载 {remaining} 套" +
+            (progressJob.ProgressFailed > 0 ? $" · 失败 {progressJob.ProgressFailed} 套" : "") +
+            (progressJob.ProgressDeferred > 0 ? $" · 待继续 {progressJob.ProgressDeferred} 套" : "");
     }
 
     private async void Continue_OnClick(object sender, RoutedEventArgs e) => await state.Queue.ContinueAsync();

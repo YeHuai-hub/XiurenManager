@@ -844,6 +844,10 @@ internal sealed class JobItem
     public string DownloadCategory { get; set; } = LibraryPaths.DefaultCategory;
     public string Status { get; set; } = "";
     public string Stage { get; set; } = "";
+    public int ProgressTotal { get; set; }
+    public int ProgressCompleted { get; set; }
+    public int ProgressFailed { get; set; }
+    public int ProgressDeferred { get; set; }
     public string Error { get; set; } = "";
     public string StartedAt { get; set; } = DateTime.Now.ToString("s");
     public string FinishedAt { get; set; } = "";
@@ -1486,11 +1490,21 @@ internal sealed record DownloadRunResult(
     public bool IsComplete => FailedGroups == 0 && DeferredGroups == 0;
 }
 
+internal sealed record DownloadProgressSnapshot(
+    int TotalGroups,
+    int CompletedGroups,
+    int FailedGroups,
+    int DeferredGroups)
+{
+    public int RemainingGroups => Math.Max(0, TotalGroups - CompletedGroups);
+}
+
 internal sealed class Downloader
 {
     private readonly Settings settings;
     private readonly Database db;
     private readonly IProgress<string> log;
+    private readonly Action<DownloadProgressSnapshot>? progress;
     private static readonly SemaphoreSlim ExtractionGate = new(1, 1);
     private readonly object progressLogGate = new();
     private readonly ConcurrentDictionary<string, string> downloadModelRoots =
@@ -1509,11 +1523,16 @@ internal sealed class Downloader
 
     private sealed class LowSpeedDownloadException(string message) : Exception(message);
 
-    public Downloader(Settings settings, Database db, IProgress<string> log)
+    public Downloader(
+        Settings settings,
+        Database db,
+        IProgress<string> log,
+        Action<DownloadProgressSnapshot>? progress = null)
     {
         this.settings = settings;
         this.db = db;
         this.log = log;
+        this.progress = progress;
     }
 
     public async Task<DownloadRunResult> RunAsync(
@@ -1525,6 +1544,47 @@ internal sealed class Downloader
         var items = resources.Where(x => !string.IsNullOrWhiteSpace(x.PanUrl)).ToList();
         if (items.Count == 0) return DownloadRunResult.Empty;
         var groups = BuildCandidateGroups(items);
+        var completedProgress = 0;
+        var failedProgress = 0;
+        var deferredProgress = 0;
+        var progressGate = new object();
+
+        ReportProgress();
+
+        void ReportProgress()
+        {
+            lock (progressGate)
+            {
+                progress?.Invoke(new DownloadProgressSnapshot(
+                    groups.Count,
+                    completedProgress,
+                    failedProgress,
+                    deferredProgress));
+            }
+        }
+
+        void FinishProgress(CandidateGroup group, bool deferred = false)
+        {
+            lock (progressGate)
+            {
+                if (deferred)
+                    deferredProgress++;
+                else if (group.Items.Any(item =>
+                             item.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase)))
+                    completedProgress++;
+                else if (group.Items.All(item =>
+                             item.DownloadStatus.Equals("Failed", StringComparison.OrdinalIgnoreCase)))
+                    failedProgress++;
+                else
+                    deferredProgress++;
+
+                progress?.Invoke(new DownloadProgressSnapshot(
+                    groups.Count,
+                    completedProgress,
+                    failedProgress,
+                    deferredProgress));
+            }
+        }
 
         var parallel = Math.Clamp(settings.DownloadParallelism, 1, 5);
         var workerConfigs = PrepareWorkerConfigs(parallel);
@@ -1542,9 +1602,11 @@ internal sealed class Downloader
             var configDir = workerConfigs[workerIndex];
             while (!ct.IsCancellationRequested && pendingGroups.TryDequeue(out var group))
             {
+                var finished = false;
                 try
                 {
                     await ProcessCandidateGroupAsync(group, configDir, saveGate, ct);
+                    finished = true;
                 }
                 catch (LowSpeedDownloadException ex)
                 {
@@ -1564,8 +1626,11 @@ internal sealed class Downloader
                         }
                         lock (saveGate) db.Save();
                         log.Report($"慢任务本轮延后: {group.Title}；已保留部分文件，下次继续队列时续传。");
+                        FinishProgress(group, deferred: true);
                     }
                 }
+                if (finished)
+                    FinishProgress(group);
             }
         });
         await Task.WhenAll(workers);
@@ -1575,6 +1640,11 @@ internal sealed class Downloader
         var failedGroups = groups.Count(x => x.Items.All(item =>
             item.DownloadStatus.Equals("Failed", StringComparison.OrdinalIgnoreCase)));
         var deferredGroups = groups.Count - completedGroups - failedGroups;
+        progress?.Invoke(new DownloadProgressSnapshot(
+            groups.Count,
+            completedGroups,
+            failedGroups,
+            deferredGroups));
         log.Report(
             $"下载阶段结束：候选组 {groups.Count} 组，成功 {completedGroups} 组，失败 {failedGroups} 组，待继续 {deferredGroups} 组。");
         return new DownloadRunResult(

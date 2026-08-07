@@ -140,6 +140,11 @@
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
                         <ui:SymbolIcon Symbol="Info24"
                                        Foreground="{StaticResource AccentTealBrush}"
                                        FontSize="20" />
@@ -148,6 +153,18 @@
                                    Margin="12,0,0,0"
                                    Foreground="{StaticResource PrimaryTextBrush}"
                                    VerticalAlignment="Center" />
+                        <ProgressBar x:Name="QueueProgressBar"
+                                     Grid.Row="1"
+                                     Grid.Column="1"
+                                     Height="4"
+                                     Margin="12,10,0,0"
+                                     Visibility="Collapsed" />
+                        <TextBlock x:Name="QueueProgressText"
+                                   Grid.Row="2"
+                                   Grid.Column="1"
+                                   Margin="12,8,0,0"
+                                   Style="{StaticResource SecondaryTextStyle}"
+                                   Visibility="Collapsed" />
                     </Grid>
                 </Border>
             </StackPanel>

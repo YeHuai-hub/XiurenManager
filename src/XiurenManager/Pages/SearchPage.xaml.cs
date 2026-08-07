@@ -97,6 +97,32 @@ public partial class SearchPage : Page
             : queued > 0
                 ? $"队列已暂停：{queued} 个任务等待继续"
                 : "队列空闲，可继续添加搜索任务";
+
+        var job = state.Database.Jobs.FirstOrDefault(x =>
+                      x.Status.Equals("Running", StringComparison.OrdinalIgnoreCase) &&
+                      x.ProgressTotal > 0)
+                  ?? state.Database.Jobs.FirstOrDefault(x =>
+                      x.ProgressTotal > 0 &&
+                      !x.Status.Equals("Done", StringComparison.OrdinalIgnoreCase))
+                  ?? state.Database.Jobs.FirstOrDefault(x => x.ProgressTotal > 0);
+        if (job == null)
+        {
+            QueueProgressBar.Visibility = Visibility.Collapsed;
+            QueueProgressText.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var remaining = Math.Max(0, job.ProgressTotal - job.ProgressCompleted);
+        var percent = job.ProgressTotal == 0 ? 0 : job.ProgressCompleted * 100d / job.ProgressTotal;
+        QueueProgressBar.Visibility = Visibility.Visible;
+        QueueProgressText.Visibility = Visibility.Visible;
+        QueueProgressBar.Maximum = Math.Max(1, job.ProgressTotal);
+        QueueProgressBar.Value = job.ProgressCompleted;
+        QueueProgressText.Text =
+            $"{QueueService.Label(job)}：已下载 {job.ProgressCompleted}/{job.ProgressTotal} 套（{percent:0.0}%），" +
+            $"未下载 {remaining} 套" +
+            (job.ProgressFailed > 0 ? $"，失败 {job.ProgressFailed} 套" : "") +
+            (job.ProgressDeferred > 0 ? $"，待继续 {job.ProgressDeferred} 套" : "");
     }
 
     private static int Number(string text, int fallback, int min, int max) =>
