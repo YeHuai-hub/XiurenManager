@@ -1608,8 +1608,10 @@ internal sealed class Downloader
         }
 
         var titleDir = Path.Combine(modelDir, XiurenClient.Safe(group.Title));
-        foreach (var item in OrderCandidates(group.Items))
+        var orderedCandidates = OrderCandidates(group.Items).ToList();
+        for (var candidateIndex = 0; candidateIndex < orderedCandidates.Count; candidateIndex++)
         {
+            var item = orderedCandidates[candidateIndex];
             log.Report($"尝试候选链接: {item.Title} -> {item.DetailUrl}");
             await ProcessOneAsync(item, configDir, saveGate, ct, group.Title);
             if (item.DownloadStatus == "Downloaded")
@@ -1626,7 +1628,14 @@ internal sealed class Downloader
                 return;
             }
 
-            DeleteIfNoMedia(titleDir);
+            if (candidateIndex < orderedCandidates.Count - 1)
+            {
+                DeleteIfNoMedia(titleDir);
+            }
+            else if (HasArchives(titleDir) || HasIncompleteDownloads(titleDir))
+            {
+                log.Report($"最后候选失败，已保留压缩包和续传文件供下次重试: {item.Title}");
+            }
             log.Report($"候选链接失败，继续尝试下一个: {item.Title}");
         }
 
@@ -1743,7 +1752,9 @@ internal sealed class Downloader
 
     private async Task RefreshMissingPanPasswordAsync(ResourceItem item, CancellationToken ct)
     {
-        if (!string.IsNullOrWhiteSpace(item.PanPassword) || string.IsNullOrWhiteSpace(item.DetailUrl)) return;
+        var needsPanPassword = string.IsNullOrWhiteSpace(item.PanPassword);
+        var needsExtractPassword = NeedsExtractPasswordRefresh(item);
+        if ((!needsPanPassword && !needsExtractPassword) || string.IsNullOrWhiteSpace(item.DetailUrl)) return;
         try
         {
             var refreshed = await new XiurenClient(settings).RefreshDetailAsync(item, ct);
@@ -1763,6 +1774,7 @@ internal sealed class Downloader
             {
                 item.ExtractPassword = refreshed.ExtractPassword;
                 changed = true;
+                log.Report("已从详情页刷新解压密码: " + item.Title);
             }
             if (changed)
             {
@@ -1774,6 +1786,18 @@ internal sealed class Downloader
         {
             log.Report("刷新详情失败，继续使用已有链接: " + item.Title + " | " + ErrorText.Format(ex).Replace(Environment.NewLine, " | "));
         }
+    }
+
+    private static bool NeedsExtractPasswordRefresh(ResourceItem item)
+    {
+        var password = (item.ExtractPassword ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(password) ||
+            password.Equals("教程", StringComparison.OrdinalIgnoreCase) ||
+            password.Equals("说明", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return item.DownloadStatus.Equals("Failed", StringComparison.OrdinalIgnoreCase) &&
+               item.Error.Contains("解压失败", StringComparison.OrdinalIgnoreCase);
     }
 
     private List<CandidateGroup> BuildCandidateGroups(List<ResourceItem> items)
@@ -1958,6 +1982,7 @@ internal sealed class Downloader
             if (!list.Contains(p, StringComparer.OrdinalIgnoreCase)) list.Add(p);
         foreach (var p in new[]
                  {
+                     "xiurentu.vip", "www.xiurentu.vip",
                      "shenye001.com", "www.shenye001.com",
                      "www.sosiba.vip", "sosiba.vip",
                      "taotudao.com", "www.taotudao.com"
@@ -2389,10 +2414,12 @@ internal sealed class Downloader
         foreach (var arg in args) psi.ArgumentList.Add(arg);
         using var process = new Process { StartInfo = psi };
         var baiduTransferError = "";
+        var repeatedArchivePasswordErrors = 0;
+        var repeatedArchiveSummaryErrors = 0;
         var speedWatch = watchLowSpeed ? new DownloadSpeedWatch() : null;
         var lowSpeedError = "";
-        process.OutputDataReceived += (_, e) => ReportProcessLine(e.Data, ref baiduTransferError, speedWatch);
-        process.ErrorDataReceived += (_, e) => ReportProcessLine(e.Data, ref baiduTransferError, speedWatch);
+        process.OutputDataReceived += (_, e) => ReportProcessLine(e.Data, ref baiduTransferError, ref repeatedArchivePasswordErrors, ref repeatedArchiveSummaryErrors, speedWatch);
+        process.ErrorDataReceived += (_, e) => ReportProcessLine(e.Data, ref baiduTransferError, ref repeatedArchivePasswordErrors, ref repeatedArchiveSummaryErrors, speedWatch);
         process.Start();
         process.StandardInput.Close();
         process.BeginOutputReadLine();
@@ -2425,6 +2452,12 @@ internal sealed class Downloader
             throw;
         }
         try { await watchdog.ConfigureAwait(false); } catch { }
+        var suppressedPasswordErrors = Volatile.Read(ref repeatedArchivePasswordErrors);
+        if (suppressedPasswordErrors > 0)
+            log.Report($"7-Zip：压缩包密码不正确，已省略 {suppressedPasswordErrors} 条逐文件重复错误。");
+        var suppressedSummaryErrors = Volatile.Read(ref repeatedArchiveSummaryErrors);
+        if (suppressedSummaryErrors > 0)
+            log.Report($"7-Zip：已省略 {suppressedSummaryErrors} 条重复的压缩包错误摘要。");
         if (!string.IsNullOrWhiteSpace(lowSpeedError) && !allowFail)
             throw new LowSpeedDownloadException(lowSpeedError);
         if (!string.IsNullOrWhiteSpace(baiduTransferError) && !allowFail)
@@ -2433,9 +2466,28 @@ internal sealed class Downloader
         return process.ExitCode;
     }
 
-    private void ReportProcessLine(string? line, ref string baiduTransferError, DownloadSpeedWatch? speedWatch)
+    private void ReportProcessLine(
+        string? line,
+        ref string baiduTransferError,
+        ref int repeatedArchivePasswordErrors,
+        ref int repeatedArchiveSummaryErrors,
+        DownloadSpeedWatch? speedWatch)
     {
         if (string.IsNullOrWhiteSpace(line)) return;
+        if (line.Contains("Data Error in encrypted file", StringComparison.OrdinalIgnoreCase) &&
+            line.Contains("Wrong password", StringComparison.OrdinalIgnoreCase))
+        {
+            Interlocked.Increment(ref repeatedArchivePasswordErrors);
+            return;
+        }
+        var trimmed = line.Trim();
+        if (trimmed.StartsWith("Sub items Errors:", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.StartsWith("Archives with Errors:", StringComparison.OrdinalIgnoreCase) ||
+            Regex.IsMatch(trimmed, @"^ERROR:\s+.+\.(?:7z|rar|zip)(?:\.\d+)?$", RegexOptions.IgnoreCase))
+        {
+            Interlocked.Increment(ref repeatedArchiveSummaryErrors);
+            return;
+        }
         if (speedWatch != null && TryParseSpeedKBps(line, out var kbps))
             speedWatch.Observe(kbps, line, settings);
         if (IsNoisyProgressLine(line))
