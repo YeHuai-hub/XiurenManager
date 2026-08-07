@@ -54,6 +54,37 @@ internal static class LibraryPaths
             : Path.Combine(categoryRoot, XiurenClient.Safe(model));
     }
 
+    public static string DownloadModelRoot(
+        Settings settings,
+        Database database,
+        string? category,
+        string model)
+    {
+        var normalizedCategory = NormalizeCategory(category);
+        var safeModel = XiurenClient.Safe(model);
+        var local = ModelRoot(settings, normalizedCategory, safeModel);
+        var archive = ArchiveModelRoot(settings, normalizedCategory, safeModel);
+        if (string.IsNullOrWhiteSpace(archive)) return local;
+
+        var trackedOnArchive = Directory.Exists(archive) ||
+                               database.LocalFiles.Any(x =>
+                                   x.Category.Equals(normalizedCategory, StringComparison.OrdinalIgnoreCase) &&
+                                   x.Model.Equals(safeModel, StringComparison.OrdinalIgnoreCase) &&
+                                   (x.StorageTier.Equals(StorageTiers.Archive, StringComparison.OrdinalIgnoreCase) ||
+                                    IsInside(x.LocalDir, settings.ArchiveRoot))) ||
+                               database.Resources.Any(x =>
+                                   x.Category.Equals(normalizedCategory, StringComparison.OrdinalIgnoreCase) &&
+                                   x.Model.Equals(safeModel, StringComparison.OrdinalIgnoreCase) &&
+                                   IsInside(x.LocalDir, settings.ArchiveRoot));
+        if (!trackedOnArchive) return local;
+        if (!Directory.Exists(settings.ArchiveRoot))
+        {
+            throw new IOException(
+                $"模特“{safeModel}”已存放在 NAS，但 NAS 当前不可用。为避免拆分资源，本次不会回退到本地下载。");
+        }
+        return archive;
+    }
+
     public static string StorageTier(Settings settings, string path)
     {
         return IsInside(path, settings.ArchiveRoot)

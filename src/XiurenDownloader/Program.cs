@@ -1493,6 +1493,8 @@ internal sealed class Downloader
     private readonly IProgress<string> log;
     private static readonly SemaphoreSlim ExtractionGate = new(1, 1);
     private readonly object progressLogGate = new();
+    private readonly ConcurrentDictionary<string, string> downloadModelRoots =
+        new(StringComparer.OrdinalIgnoreCase);
     private DateTime lastProgressLog = DateTime.MinValue;
 
     private sealed class CandidateGroup
@@ -1584,7 +1586,7 @@ internal sealed class Downloader
 
     private async Task ProcessCandidateGroupAsync(CandidateGroup group, string configDir, object saveGate, CancellationToken ct)
     {
-        var modelDir = LibraryPaths.ModelRoot(settings, group.Category, group.Model);
+        var modelDir = DownloadModelRoot(group.Category, group.Model);
         Directory.CreateDirectory(modelDir);
 
         var existingDir = FindExistingMediaDir(modelDir, group.Title);
@@ -1642,7 +1644,7 @@ internal sealed class Downloader
 
     private async Task ProcessOneAsync(ResourceItem item, string configDir, object saveGate, CancellationToken ct, string? canonicalTitle = null)
     {
-        var modelDir = LibraryPaths.ModelRoot(settings, item.Category, item.Model);
+        var modelDir = DownloadModelRoot(item.Category, item.Model);
         var workTitle = canonicalTitle ?? item.Title;
         var defaultTitleDir = Path.Combine(modelDir, XiurenClient.Safe(workTitle));
         var titleDir = ResolveWorkingTitleDir(item, defaultTitleDir);
@@ -2108,8 +2110,32 @@ internal sealed class Downloader
     {
         if (!string.IsNullOrWhiteSpace(item.LocalDir) &&
             HasIncompleteDownloads(item.LocalDir))
-            return item.LocalDir;
+        {
+            var intendedModelDir = Directory.GetParent(defaultTitleDir)?.FullName ?? "";
+            if (LibraryPaths.IsInside(item.LocalDir, intendedModelDir))
+                return item.LocalDir;
+            throw new IOException(
+                $"检测到“{item.Model}”的断点文件位于另一存储位置。为避免拆分资源，请先完成存储整理后再继续队列。");
+        }
         return defaultTitleDir;
+    }
+
+    private string DownloadModelRoot(string? category, string model)
+    {
+        var normalizedCategory = LibraryPaths.NormalizeCategory(category);
+        var safeModel = XiurenClient.Safe(model);
+        var key = normalizedCategory + "|" + safeModel;
+        return downloadModelRoots.GetOrAdd(key, _ =>
+        {
+            var path = LibraryPaths.DownloadModelRoot(
+                settings,
+                db,
+                normalizedCategory,
+                safeModel);
+            if (LibraryPaths.IsInside(path, settings.ArchiveRoot))
+                log.Report($"模特已位于 NAS，新资源继续保存到 NAS: {safeModel}");
+            return path;
+        });
     }
 
     private bool HasIncompleteDownloads(string dir) => GetIncompleteDownloadFiles(dir).Count > 0;
