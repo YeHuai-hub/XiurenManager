@@ -94,13 +94,13 @@ internal sealed class QueueService
         {
             foreach (var job in jobs)
             {
-                if (job.Type == "SearchDownload" &&
-                    HasPendingForModel(
-                        job.Target,
-                        job.DownloadCategory,
-                        job.Exclusions))
+                var pendingCategory = FindPendingCategoryForModel(
+                    job.Target,
+                    job.Exclusions);
+                if (job.Type == "SearchDownload" && pendingCategory != null)
                 {
                     job.Type = "DownloadModelReady";
+                    job.DownloadCategory = pendingCategory;
                 }
                 job.Status = "Queued";
                 job.Stage = "";
@@ -403,14 +403,11 @@ internal sealed class QueueService
 
     private bool HasPendingForModel(
         string modelName,
-        string categoryName,
         string exclusionsText = "")
     {
         var model = XiurenClient.Safe(modelName.Trim());
-        var category = LibraryPaths.NormalizeCategory(categoryName);
         var exclusions = XiurenClient.ExclusionTerms(exclusionsText);
         return state.Database.Resources.Any(x =>
-            x.Category.Equals(category, StringComparison.OrdinalIgnoreCase) &&
             x.Model.Equals(model, StringComparison.OrdinalIgnoreCase) &&
             x.Status.Equals("Ready", StringComparison.OrdinalIgnoreCase) &&
             !x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase) &&
@@ -418,12 +415,28 @@ internal sealed class QueueService
             string.IsNullOrWhiteSpace(XiurenClient.MatchExclusion(x.Title, exclusions)));
     }
 
+    private string? FindPendingCategoryForModel(
+        string modelName,
+        string exclusionsText = "")
+    {
+        var model = XiurenClient.Safe(modelName.Trim());
+        var exclusions = XiurenClient.ExclusionTerms(exclusionsText);
+        return state.Database.Resources
+            .Where(x =>
+                x.Model.Equals(model, StringComparison.OrdinalIgnoreCase) &&
+                x.Status.Equals("Ready", StringComparison.OrdinalIgnoreCase) &&
+                !x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(x.PanUrl) &&
+                string.IsNullOrWhiteSpace(XiurenClient.MatchExclusion(x.Title, exclusions)))
+            .Select(x => LibraryPaths.NormalizeCategory(x.Category))
+            .FirstOrDefault();
+    }
+
     private bool HasPendingForJob(JobItem job)
     {
         if (job.Type is "SearchDownload" or "DownloadModelReady")
             return HasPendingForModel(
                 job.Target,
-                job.DownloadCategory,
                 job.Exclusions);
         if (job.Type == "DownloadReady")
             return state.Database.Resources.Any(x =>
