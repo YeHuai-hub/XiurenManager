@@ -177,6 +177,7 @@ internal sealed class QueueService
                 job.Stage = "准备";
                 job.ProgressTotal = 0;
                 job.ProgressCompleted = 0;
+                job.ProgressSkipped = 0;
                 job.ProgressFailed = 0;
                 job.ProgressDeferred = 0;
                 job.Error = "";
@@ -461,7 +462,7 @@ internal sealed class QueueService
     {
         if (result.IsComplete) return;
         throw new InvalidOperationException(
-            $"下载未全部完成：共 {result.TotalGroups} 组，成功 {result.CompletedGroups} 组，" +
+            $"下载未全部完成：共 {result.TotalGroups} 组，成功 {result.CompletedGroups} 组，跳过不可用 {result.SkippedGroups} 组，" +
             $"失败 {result.FailedGroups} 组，待继续 {result.DeferredGroups} 组。可点击继续队列重试。" );
     }
 
@@ -543,6 +544,7 @@ internal sealed class QueueService
     {
         job.ProgressTotal = value.TotalGroups;
         job.ProgressCompleted = value.CompletedGroups;
+        job.ProgressSkipped = value.SkippedGroups;
         job.ProgressFailed = value.FailedGroups;
         job.ProgressDeferred = value.DeferredGroups;
         state.Database.Save();

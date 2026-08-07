@@ -846,6 +846,7 @@ internal sealed class JobItem
     public string Stage { get; set; } = "";
     public int ProgressTotal { get; set; }
     public int ProgressCompleted { get; set; }
+    public int ProgressSkipped { get; set; }
     public int ProgressFailed { get; set; }
     public int ProgressDeferred { get; set; }
     public string Error { get; set; } = "";
@@ -1483,20 +1484,22 @@ internal sealed class XiurenClient
 internal sealed record DownloadRunResult(
     int TotalGroups,
     int CompletedGroups,
+    int SkippedGroups,
     int FailedGroups,
     int DeferredGroups)
 {
-    public static DownloadRunResult Empty { get; } = new(0, 0, 0, 0);
+    public static DownloadRunResult Empty { get; } = new(0, 0, 0, 0, 0);
     public bool IsComplete => FailedGroups == 0 && DeferredGroups == 0;
 }
 
 internal sealed record DownloadProgressSnapshot(
     int TotalGroups,
     int CompletedGroups,
+    int SkippedGroups,
     int FailedGroups,
     int DeferredGroups)
 {
-    public int RemainingGroups => Math.Max(0, TotalGroups - CompletedGroups);
+    public int RemainingGroups => Math.Max(0, TotalGroups - CompletedGroups - SkippedGroups);
 }
 
 internal sealed class Downloader
@@ -1522,6 +1525,7 @@ internal sealed class Downloader
     }
 
     private sealed class LowSpeedDownloadException(string message) : Exception(message);
+    private sealed class PermanentResourceUnavailableException(string message) : Exception(message);
 
     public Downloader(
         Settings settings,
@@ -1545,6 +1549,7 @@ internal sealed class Downloader
         if (items.Count == 0) return DownloadRunResult.Empty;
         var groups = BuildCandidateGroups(items);
         var completedProgress = 0;
+        var skippedProgress = 0;
         var failedProgress = 0;
         var deferredProgress = 0;
         var progressGate = new object();
@@ -1558,6 +1563,7 @@ internal sealed class Downloader
                 progress?.Invoke(new DownloadProgressSnapshot(
                     groups.Count,
                     completedProgress,
+                    skippedProgress,
                     failedProgress,
                     deferredProgress));
             }
@@ -1573,6 +1579,9 @@ internal sealed class Downloader
                              item.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase)))
                     completedProgress++;
                 else if (group.Items.All(item =>
+                             item.DownloadStatus.Equals("Unavailable", StringComparison.OrdinalIgnoreCase)))
+                    skippedProgress++;
+                else if (group.Items.All(item =>
                              item.DownloadStatus.Equals("Failed", StringComparison.OrdinalIgnoreCase)))
                     failedProgress++;
                 else
@@ -1581,6 +1590,7 @@ internal sealed class Downloader
                 progress?.Invoke(new DownloadProgressSnapshot(
                     groups.Count,
                     completedProgress,
+                    skippedProgress,
                     failedProgress,
                     deferredProgress));
             }
@@ -1637,19 +1647,23 @@ internal sealed class Downloader
 
         var completedGroups = groups.Count(x => x.Items.Any(item =>
             item.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase)));
+        var skippedGroups = groups.Count(x => x.Items.All(item =>
+            item.DownloadStatus.Equals("Unavailable", StringComparison.OrdinalIgnoreCase)));
         var failedGroups = groups.Count(x => x.Items.All(item =>
             item.DownloadStatus.Equals("Failed", StringComparison.OrdinalIgnoreCase)));
-        var deferredGroups = groups.Count - completedGroups - failedGroups;
+        var deferredGroups = groups.Count - completedGroups - skippedGroups - failedGroups;
         progress?.Invoke(new DownloadProgressSnapshot(
             groups.Count,
             completedGroups,
+            skippedGroups,
             failedGroups,
             deferredGroups));
         log.Report(
-            $"下载阶段结束：候选组 {groups.Count} 组，成功 {completedGroups} 组，失败 {failedGroups} 组，待继续 {deferredGroups} 组。");
+            $"下载阶段结束：候选组 {groups.Count} 组，成功 {completedGroups} 组，跳过不可用 {skippedGroups} 组，失败 {failedGroups} 组，待继续 {deferredGroups} 组。");
         return new DownloadRunResult(
             groups.Count,
             completedGroups,
+            skippedGroups,
             failedGroups,
             deferredGroups);
     }
@@ -1688,6 +1702,7 @@ internal sealed class Downloader
             {
                 foreach (var candidate in group.Items)
                 {
+                    candidate.Status = "Ready";
                     candidate.LocalDir = item.LocalDir;
                     candidate.DownloadStatus = "Downloaded";
                     candidate.ExtractStatus = "Extracted";
@@ -1706,7 +1721,17 @@ internal sealed class Downloader
             {
                 log.Report($"最后候选失败，已保留压缩包和续传文件供下次重试: {item.Title}");
             }
-            log.Report($"候选链接失败，继续尝试下一个: {item.Title}");
+            log.Report(item.DownloadStatus.Equals("Unavailable", StringComparison.OrdinalIgnoreCase)
+                ? $"候选链接不可用，继续检查备用链接: {item.Title}"
+                : $"候选链接失败，继续尝试下一个: {item.Title}");
+        }
+
+        if (group.Items.All(item =>
+                item.DownloadStatus.Equals("Unavailable", StringComparison.OrdinalIgnoreCase)))
+        {
+            lock (saveGate) db.Save();
+            log.Report($"候选组链接均不可用，已跳过: {group.Title} | 候选链接 {group.Items.Count} 个");
+            return;
         }
 
         var errors = string.Join("；", group.Items.Where(x => !string.IsNullOrWhiteSpace(x.Error)).Select(x => x.Error).Distinct().Take(5));
@@ -1745,6 +1770,7 @@ internal sealed class Downloader
 
         try
         {
+            item.Error = "";
             Directory.CreateDirectory(titleDir);
             ClearReadOnlyAttributes(titleDir);
             if (VideoValidator.HasInvalidMarker(titleDir))
@@ -1783,10 +1809,20 @@ internal sealed class Downloader
             }
             else
             {
+                var transferError = "";
                 var args = new List<string> { "transfer", item.PanUrl };
                 args.Add(string.IsNullOrWhiteSpace(item.PanPassword) ? "" : item.PanPassword);
                 args.Add("--download");
-                await Proc(settings.BaiduPcsPath, args, AppPaths.ToolRoot, ct, allowFail: true, configDir: configDir, watchLowSpeed: true);
+                await Proc(
+                    settings.BaiduPcsPath,
+                    args,
+                    AppPaths.ToolRoot,
+                    ct,
+                    allowFail: true,
+                    configDir: configDir,
+                    watchLowSpeed: true,
+                    captureTransferError: value => transferError = value);
+                item.Error = transferError;
             }
             if (!HasArchives(titleDir) && !HasMedia(titleDir))
             {
@@ -1797,13 +1833,27 @@ internal sealed class Downloader
                 await RefreshPanLinkAfterTransferFailureAsync(item, ct))
             {
                 log.Report("检测到网站已更换网盘链接，使用新链接重试: " + item.Title);
+                var transferError = "";
                 var retryArgs = new List<string> { "transfer", item.PanUrl };
                 retryArgs.Add(string.IsNullOrWhiteSpace(item.PanPassword) ? "" : item.PanPassword);
                 retryArgs.Add("--download");
-                await Proc(settings.BaiduPcsPath, retryArgs, AppPaths.ToolRoot, ct, allowFail: true, configDir: configDir, watchLowSpeed: true);
+                await Proc(
+                    settings.BaiduPcsPath,
+                    retryArgs,
+                    AppPaths.ToolRoot,
+                    ct,
+                    allowFail: true,
+                    configDir: configDir,
+                    watchLowSpeed: true,
+                    captureTransferError: value => transferError = value);
+                item.Error = transferError;
                 if (!HasArchives(titleDir) && !HasMedia(titleDir))
                     await Proc(settings.BaiduPcsPath, ["d", remoteItemDir, "--saveto", titleDir.Replace('\\', '/'), "--ow"], AppPaths.ToolRoot, ct, configDir: configDir, watchLowSpeed: true);
             }
+            if (!HasArchives(titleDir) && !HasMedia(titleDir) && IsPermanentPanFailure(item.Error))
+                throw new PermanentResourceUnavailableException(
+                    "网站当前提供的百度链接不可用，已自动跳过；以后重新搜索发现补链时会恢复。" +
+                    (string.IsNullOrWhiteSpace(item.Error) ? "" : " | " + item.Error));
             if (!HasArchives(titleDir) && !HasMedia(titleDir))
                 throw new InvalidOperationException("网盘转存/下载失败：没有下载到任何文件，可能是分享链接失效或页面不存在。");
 
@@ -1821,6 +1871,15 @@ internal sealed class Downloader
             lock (saveGate) db.Save();
             throw;
         }
+        catch (PermanentResourceUnavailableException ex)
+        {
+            item.Status = "Unavailable";
+            item.DownloadStatus = "Unavailable";
+            item.ExtractStatus = "";
+            item.Error = ex.Message;
+            DeleteIfEmpty(titleDir);
+            log.Report("链接不可用，已自动跳过: " + item.Title + " | " + ex.Message);
+        }
         catch (Exception ex)
         {
             item.DownloadStatus = "Failed";
@@ -1830,6 +1889,17 @@ internal sealed class Downloader
             log.Report("失败: " + item.Title + " | " + ex.Message);
         }
         lock (saveGate) db.Save();
+    }
+
+    private static bool IsPermanentPanFailure(string? error)
+    {
+        if (string.IsNullOrWhiteSpace(error)) return false;
+        return error.Contains("错误码-21", StringComparison.OrdinalIgnoreCase) ||
+               error.Contains("页面不存在", StringComparison.OrdinalIgnoreCase) ||
+               error.Contains("分享不存在", StringComparison.OrdinalIgnoreCase) ||
+               error.Contains("分享链接已失效", StringComparison.OrdinalIgnoreCase) ||
+               error.Contains("分享链接失效", StringComparison.OrdinalIgnoreCase) ||
+               error.Contains("提取码错误", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task RefreshMissingPanPasswordAsync(ResourceItem item, CancellationToken ct)
@@ -2562,7 +2632,15 @@ internal sealed class Downloader
         }
     }
 
-    private async Task<int> Proc(string exe, IReadOnlyList<string> args, string cwd, CancellationToken ct, bool allowFail = false, string? configDir = null, bool watchLowSpeed = false)
+    private async Task<int> Proc(
+        string exe,
+        IReadOnlyList<string> args,
+        string cwd,
+        CancellationToken ct,
+        bool allowFail = false,
+        string? configDir = null,
+        bool watchLowSpeed = false,
+        Action<string>? captureTransferError = null)
     {
         var psi = new ProcessStartInfo(exe)
         {
@@ -2623,6 +2701,8 @@ internal sealed class Downloader
         var suppressedSummaryErrors = Volatile.Read(ref repeatedArchiveSummaryErrors);
         if (suppressedSummaryErrors > 0)
             log.Report($"7-Zip：已省略 {suppressedSummaryErrors} 条重复的压缩包错误摘要。");
+        if (!string.IsNullOrWhiteSpace(baiduTransferError))
+            captureTransferError?.Invoke(baiduTransferError);
         if (!string.IsNullOrWhiteSpace(lowSpeedError) && !allowFail)
             throw new LowSpeedDownloadException(lowSpeedError);
         if (!string.IsNullOrWhiteSpace(baiduTransferError) && !allowFail)

@@ -112,15 +112,17 @@ public partial class SearchPage : Page
             return;
         }
 
-        var remaining = Math.Max(0, job.ProgressTotal - job.ProgressCompleted);
-        var percent = job.ProgressTotal == 0 ? 0 : job.ProgressCompleted * 100d / job.ProgressTotal;
+        var processed = job.ProgressCompleted + job.ProgressSkipped;
+        var remaining = Math.Max(0, job.ProgressTotal - processed);
+        var percent = job.ProgressTotal == 0 ? 0 : processed * 100d / job.ProgressTotal;
         QueueProgressBar.Visibility = Visibility.Visible;
         QueueProgressText.Visibility = Visibility.Visible;
         QueueProgressBar.Maximum = Math.Max(1, job.ProgressTotal);
-        QueueProgressBar.Value = job.ProgressCompleted;
+        QueueProgressBar.Value = processed;
         QueueProgressText.Text =
             $"{QueueService.Label(job)}：已下载 {job.ProgressCompleted}/{job.ProgressTotal} 套（{percent:0.0}%），" +
             $"未下载 {remaining} 套" +
+            (job.ProgressSkipped > 0 ? $"，已跳过不可用 {job.ProgressSkipped} 套" : "") +
             (job.ProgressFailed > 0 ? $"，失败 {job.ProgressFailed} 套" : "") +
             (job.ProgressDeferred > 0 ? $"，待继续 {job.ProgressDeferred} 套" : "");
     }

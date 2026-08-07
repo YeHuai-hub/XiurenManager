@@ -30,8 +30,9 @@ internal sealed class TaskRow
     private static string ProgressText(JobItem item)
     {
         if (item.ProgressTotal <= 0) return item.Stage == "搜索" ? "正在搜索资源" : "";
-        var remaining = Math.Max(0, item.ProgressTotal - item.ProgressCompleted);
+        var remaining = Math.Max(0, item.ProgressTotal - item.ProgressCompleted - item.ProgressSkipped);
         var value = $"已下载 {item.ProgressCompleted}/{item.ProgressTotal} · 未下载 {remaining}";
+        if (item.ProgressSkipped > 0) value += $" · 已跳过 {item.ProgressSkipped}";
         if (item.ProgressFailed > 0) value += $" · 失败 {item.ProgressFailed}";
         if (item.ProgressDeferred > 0) value += $" · 待继续 {item.ProgressDeferred}";
         return value;
@@ -93,17 +94,19 @@ public partial class TasksPage : Page
             return;
         }
 
-        var remaining = Math.Max(0, progressJob.ProgressTotal - progressJob.ProgressCompleted);
+        var processed = progressJob.ProgressCompleted + progressJob.ProgressSkipped;
+        var remaining = Math.Max(0, progressJob.ProgressTotal - processed);
         var percent = progressJob.ProgressTotal == 0
             ? 0
-            : progressJob.ProgressCompleted * 100d / progressJob.ProgressTotal;
+            : processed * 100d / progressJob.ProgressTotal;
         DownloadProgressPanel.Visibility = Visibility.Visible;
         DownloadProgressTitle.Text = QueueService.Label(progressJob);
         DownloadProgressPercent.Text = $"{percent:0.0}%";
         DownloadProgressBar.Maximum = Math.Max(1, progressJob.ProgressTotal);
-        DownloadProgressBar.Value = progressJob.ProgressCompleted;
+        DownloadProgressBar.Value = processed;
         DownloadProgressDetail.Text =
             $"总计 {progressJob.ProgressTotal} 套 · 已下载 {progressJob.ProgressCompleted} 套 · 未下载 {remaining} 套" +
+            (progressJob.ProgressSkipped > 0 ? $" · 已跳过不可用 {progressJob.ProgressSkipped} 套" : "") +
             (progressJob.ProgressFailed > 0 ? $" · 失败 {progressJob.ProgressFailed} 套" : "") +
             (progressJob.ProgressDeferred > 0 ? $" · 待继续 {progressJob.ProgressDeferred} 套" : "");
     }
