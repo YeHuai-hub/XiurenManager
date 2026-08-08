@@ -1582,6 +1582,7 @@ internal sealed class Downloader
     }
 
     private sealed class LowSpeedDownloadException(string message) : Exception(message);
+    private sealed class DeferredDownloadException(string message) : Exception(message);
     private sealed class PermanentResourceUnavailableException(string message) : Exception(message);
 
     public Downloader(
@@ -1695,6 +1696,18 @@ internal sealed class Downloader
                         log.Report($"慢任务本轮延后: {group.Title}；已保留部分文件，下次继续队列时续传。");
                         FinishProgress(group, deferred: true);
                     }
+                }
+                catch (DeferredDownloadException ex)
+                {
+                    foreach (var item in group.Items)
+                    {
+                        item.DownloadStatus = "Ready";
+                        item.ExtractStatus = "";
+                        item.Error = ex.Message;
+                    }
+                    lock (saveGate) db.Save();
+                    log.Report($"任务等待下次续传: {group.Title} | {ex.Message}");
+                    FinishProgress(group, deferred: true);
                 }
                 if (finished)
                     FinishProgress(group);
@@ -1836,13 +1849,15 @@ internal sealed class Downloader
                 DeleteArchives(titleDir);
                 log.Report($"准备重新下载，已移除确认损坏的视频: {removed} 个 - {item.Title}");
             }
-            if (HasArchives(titleDir))
+            if (HasArchives(titleDir) && !HasIncompleteDownloads(titleDir))
             {
                 log.Report("发现本地压缩包，先尝试解压: " + item.Title);
                 await RefreshMissingPanPasswordAsync(item, ct);
                 await FinalizeLocalFiles(item, titleDir, ct);
                 return;
             }
+            if (HasIncompleteDownloads(titleDir))
+                log.Report("发现未完成分卷，先续传完整文件再解压: " + item.Title);
 
             log.Report("转存并下载: " + item.Title);
             await RefreshMissingPanPasswordAsync(item, ct);
@@ -1857,11 +1872,12 @@ internal sealed class Downloader
                 log.Report("发现未完成文件，直接从已转存网盘目录续传: " + item.Title);
                 foreach (var partialFile in partialFiles)
                 {
-                    var remoteFile = CombineRemote(remoteItemDir, Path.GetFileName(partialFile));
+                    var fileName = Path.GetFileName(partialFile);
+                    var remoteFile = await FindRemoteFileAsync(remoteItemDir, fileName, configDir, ct) ??
+                                     CombineRemote(remoteItemDir, fileName);
                     var partialDir = Path.GetDirectoryName(partialFile)!;
                     log.Report($"续传文件: {remoteFile} -> {partialDir}");
                     await Proc(settings.BaiduPcsPath, ["d", remoteFile, "--saveto", partialDir.Replace('\\', '/')], AppPaths.ToolRoot, ct, configDir: configDir, watchLowSpeed: true);
-                    if (HasArchives(titleDir) || HasMedia(titleDir)) break;
                 }
             }
             else
@@ -1907,6 +1923,8 @@ internal sealed class Downloader
                 if (!HasArchives(titleDir) && !HasMedia(titleDir))
                     await Proc(settings.BaiduPcsPath, ["d", remoteItemDir, "--saveto", titleDir.Replace('\\', '/'), "--ow"], AppPaths.ToolRoot, ct, configDir: configDir, watchLowSpeed: true);
             }
+            if (HasIncompleteDownloads(titleDir))
+                throw new DeferredDownloadException("分卷文件仍未下载完整，已保留断点文件；下次继续队列时会接着下载。");
             if (!HasArchives(titleDir) && !HasMedia(titleDir) && IsPermanentPanFailure(item.Error))
                 throw new PermanentResourceUnavailableException(
                     "网站当前提供的百度链接不可用，已自动跳过；以后重新搜索发现补链时会恢复。" +
@@ -1928,6 +1946,14 @@ internal sealed class Downloader
             lock (saveGate) db.Save();
             throw;
         }
+        catch (DeferredDownloadException ex)
+        {
+            item.DownloadStatus = "Ready";
+            item.ExtractStatus = "";
+            item.Error = ex.Message;
+            lock (saveGate) db.Save();
+            throw;
+        }
         catch (PermanentResourceUnavailableException ex)
         {
             item.Status = "Unavailable";
@@ -1936,6 +1962,16 @@ internal sealed class Downloader
             item.Error = ex.Message;
             DeleteIfEmpty(titleDir);
             log.Report("链接不可用，已自动跳过: " + item.Title + " | " + ex.Message);
+        }
+        catch (Exception ex) when (IsConfirmedTerminalFailure(ex, titleDir))
+        {
+            item.Status = "Unavailable";
+            item.DownloadStatus = "Unavailable";
+            item.ExtractStatus = "";
+            item.Error = "已最终跳过：所有可识别密码和本地说明均已尝试，资源仍无法完成。 | " + ex.Message;
+            DeleteInvalidMediaFiles(titleDir);
+            DeleteIfEmpty(titleDir);
+            log.Report("确认无法完成，已自动跳过: " + item.Title + " | " + ex.Message);
         }
         catch (Exception ex)
         {
@@ -1956,7 +1992,15 @@ internal sealed class Downloader
                error.Contains("分享不存在", StringComparison.OrdinalIgnoreCase) ||
                error.Contains("分享链接已失效", StringComparison.OrdinalIgnoreCase) ||
                error.Contains("分享链接失效", StringComparison.OrdinalIgnoreCase) ||
+               error.Contains("错误码115", StringComparison.OrdinalIgnoreCase) ||
                error.Contains("提取码错误", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsConfirmedTerminalFailure(Exception error, string directory)
+    {
+        if (HasIncompleteDownloads(directory)) return false;
+        return error.Message.StartsWith("解压失败:", StringComparison.OrdinalIgnoreCase) ||
+               error.Message.Equals("解压后未发现可用图片或视频", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task RefreshMissingPanPasswordAsync(ResourceItem item, CancellationToken ct)
@@ -2201,7 +2245,7 @@ internal sealed class Downloader
 
                 var ok = false;
                 var inputName = Path.GetRelativePath(dir, file);
-                foreach (var password in Passwords(passwords))
+                foreach (var password in Passwords(passwords, dir))
                 {
                     DeleteZeroByteArchives(dir);
                     DeleteInvalidMediaFiles(dir);
@@ -2239,11 +2283,12 @@ internal sealed class Downloader
         return candidate;
     }
 
-    private IEnumerable<string> Passwords(string value)
+    private IEnumerable<string> Passwords(string value, string directory)
     {
         var list = new List<string>();
-        foreach (var p in (value ?? "").Split(["或", "|", "/", ";", ",", "，"], StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim().Trim('】', ']', '：', ':')).Where(x => x.Length > 0 && !x.Equals("教程", StringComparison.OrdinalIgnoreCase) && !x.Equals("说明", StringComparison.OrdinalIgnoreCase)))
-            if (!list.Contains(p, StringComparer.OrdinalIgnoreCase)) list.Add(p);
+        AddPasswordCandidates(list, value);
+        foreach (var sidecarPassword in ReadSidecarPasswords(directory))
+            AddPasswordCandidates(list, sidecarPassword);
         foreach (var p in new[]
                  {
                      "xiurentu.vip", "www.xiurentu.vip",
@@ -2253,6 +2298,52 @@ internal sealed class Downloader
                  })
             if (!list.Contains(p, StringComparer.OrdinalIgnoreCase)) list.Add(p);
         return list;
+    }
+
+    private static void AddPasswordCandidates(List<string> list, string? value)
+    {
+        foreach (var raw in Regex.Split(value ?? "", @"\s*(?:或|\||;|,|，)\s*|\s+/\s+"))
+        {
+            var password = raw.Trim().Trim('】', ']', '：', ':');
+            if (password.Length == 0 ||
+                password.Equals("教程", StringComparison.OrdinalIgnoreCase) ||
+                password.Equals("说明", StringComparison.OrdinalIgnoreCase) ||
+                password.Equals("购买后可见", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!list.Contains(password, StringComparer.OrdinalIgnoreCase))
+                list.Add(password);
+        }
+    }
+
+    private static IEnumerable<string> ReadSidecarPasswords(string directory)
+    {
+        if (!Directory.Exists(directory)) yield break;
+        IEnumerable<string> files;
+        try
+        {
+            files = Directory.EnumerateFiles(directory, "*.txt", SearchOption.AllDirectories)
+                .Where(file => new FileInfo(file).Length is > 0 and <= 1024 * 1024)
+                .ToList();
+        }
+        catch
+        {
+            yield break;
+        }
+
+        foreach (var file in files)
+        {
+            string text;
+            try { text = File.ReadAllText(file); }
+            catch { continue; }
+            foreach (Match match in Regex.Matches(
+                         text,
+                         @"(?:解压密码|二次密码|密码)\s*(?:是|为)?\s*[:：]?\s*(https?://[^\s，。；;,<>()（）]+|[^\s，。；;,<>()（）]{4,})",
+                         RegexOptions.IgnoreCase))
+            {
+                var password = match.Groups[1].Value.Trim().TrimEnd('。', '；', ';', '，', ',');
+                if (!string.IsNullOrWhiteSpace(password)) yield return password;
+            }
+        }
     }
 
     private void CleanSidecars(string dir)
@@ -2468,6 +2559,34 @@ internal sealed class Downloader
         root = string.IsNullOrWhiteSpace(root) ? "/" : root.TrimEnd('/');
         if (!root.StartsWith('/')) root = "/" + root;
         return root + "/" + child.Trim('/');
+    }
+
+    private async Task<string?> FindRemoteFileAsync(
+        string remoteItemDir,
+        string fileName,
+        string configDir,
+        CancellationToken ct)
+    {
+        var lines = new ConcurrentQueue<string>();
+        await Proc(
+            settings.BaiduPcsPath,
+            ["search", "--path", remoteItemDir, "-r", fileName],
+            AppPaths.ToolRoot,
+            ct,
+            allowFail: true,
+            configDir: configDir,
+            captureLine: lines.Enqueue);
+
+        var prefix = remoteItemDir.TrimEnd('/') + "/";
+        foreach (var line in lines)
+        {
+            var start = line.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
+            if (start < 0) continue;
+            var candidate = line[start..].Trim();
+            if (Path.GetFileName(candidate).Equals(fileName, StringComparison.OrdinalIgnoreCase))
+                return candidate;
+        }
+        return null;
     }
 
     private bool IsMediaFile(string f)
@@ -2697,7 +2816,8 @@ internal sealed class Downloader
         bool allowFail = false,
         string? configDir = null,
         bool watchLowSpeed = false,
-        Action<string>? captureTransferError = null)
+        Action<string>? captureTransferError = null,
+        Action<string>? captureLine = null)
     {
         var psi = new ProcessStartInfo(exe)
         {
@@ -2718,8 +2838,16 @@ internal sealed class Downloader
         var repeatedArchiveSummaryErrors = 0;
         var speedWatch = watchLowSpeed ? new DownloadSpeedWatch() : null;
         var lowSpeedError = "";
-        process.OutputDataReceived += (_, e) => ReportProcessLine(e.Data, ref baiduTransferError, ref repeatedArchivePasswordErrors, ref repeatedArchiveSummaryErrors, speedWatch);
-        process.ErrorDataReceived += (_, e) => ReportProcessLine(e.Data, ref baiduTransferError, ref repeatedArchivePasswordErrors, ref repeatedArchiveSummaryErrors, speedWatch);
+        process.OutputDataReceived += (_, e) =>
+        {
+            if (e.Data != null) captureLine?.Invoke(e.Data);
+            ReportProcessLine(e.Data, ref baiduTransferError, ref repeatedArchivePasswordErrors, ref repeatedArchiveSummaryErrors, speedWatch);
+        };
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data != null) captureLine?.Invoke(e.Data);
+            ReportProcessLine(e.Data, ref baiduTransferError, ref repeatedArchivePasswordErrors, ref repeatedArchiveSummaryErrors, speedWatch);
+        };
         process.Start();
         process.StandardInput.Close();
         process.BeginOutputReadLine();

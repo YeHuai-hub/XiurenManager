@@ -139,8 +139,10 @@ public partial class TasksPage : Page
     private void ClearCompleted_OnClick(object sender, RoutedEventArgs e)
     {
         Clear(
-            x => x.Status.Equals("Done", StringComparison.OrdinalIgnoreCase),
-            "已完成");
+            x => x.Status.Equals("Done", StringComparison.OrdinalIgnoreCase) ||
+                 x.Status.Equals("Failed", StringComparison.OrdinalIgnoreCase) ||
+                 x.Status.Equals("Canceled", StringComparison.OrdinalIgnoreCase),
+            "已结束");
     }
 
     private void ClearAll_OnClick(object sender, RoutedEventArgs e)

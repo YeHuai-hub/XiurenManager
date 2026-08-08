@@ -33,11 +33,31 @@ internal sealed class QueueService
             job.Stage = "";
             job.Error = "任务仍有未完成资源，可点击继续队列恢复。";
         }
-        if (interrupted.Count > 0 || incorrectlyCompleted.Count > 0)
+        var settledFailures = state.Database.Jobs.Where(x =>
+                x.Status.Equals("Failed", StringComparison.OrdinalIgnoreCase) &&
+                x.Error.Contains("下载未全部完成", StringComparison.OrdinalIgnoreCase) &&
+                !HasPendingForJob(x))
+            .ToList();
+        foreach (var job in settledFailures)
+        {
+            job.Status = "Done";
+            job.Stage = "";
+            job.ProgressFailed = 0;
+            job.ProgressDeferred = 0;
+            var unaccounted = Math.Max(
+                0,
+                job.ProgressTotal - job.ProgressCompleted - job.ProgressSkipped);
+            job.ProgressSkipped += unaccounted;
+            job.Error = "";
+            job.FinishedAt = DateTime.Now.ToString("s");
+        }
+        if (interrupted.Count > 0 || incorrectlyCompleted.Count > 0 || settledFailures.Count > 0)
         {
             try
             {
                 state.Database.Save();
+                if (settledFailures.Count > 0)
+                    state.WriteLog($"已将 {settledFailures.Count} 个没有待处理资源的旧失败任务改为已完成。");
             }
             catch (IOException ex)
             {

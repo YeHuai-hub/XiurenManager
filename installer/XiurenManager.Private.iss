@@ -1,5 +1,5 @@
 #define MyAppName "写真资源管理器"
-#define MyAppVersion "3.6.3"
+#define MyAppVersion "3.6.4"
 #define MyAppPublisher "Private Local Tools"
 #define MyAppExeName "XiurenManager.exe"
 #ifndef PublishDir
@@ -12,7 +12,7 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} 私人版 {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-VersionInfoVersion=3.6.3.0
+VersionInfoVersion=3.6.4.0
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
@@ -21,7 +21,7 @@ DefaultDirName=E:\Apps\写真资源管理器
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\artifacts\installer
-OutputBaseFilename=写真资源管理器-私人版-Setup-3.6.3
+OutputBaseFilename=写真资源管理器-私人版-Setup-3.6.4
 SetupIconFile=..\src\XiurenDownloader\Assets\app.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 PrivilegesRequired=lowest
