@@ -36,6 +36,7 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="54" />
                     <RowDefinition Height="54" />
+                    <RowDefinition Height="54" />
                 </Grid.RowDefinitions>
                 <TextBlock Text="网站地址" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
                 <ui:TextBox x:Name="BaseUrl" Grid.Column="1" />
@@ -52,6 +53,12 @@
                              Background="{StaticResource SurfaceBrush}"
                              Foreground="{StaticResource PrimaryTextBrush}"
                              BorderBrush="{StaticResource StrokeBrush}" />
+                <TextBlock Grid.Row="2" Text="代理地址" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
+                <ui:TextBox x:Name="ProxyUrl"
+                            Grid.Row="2"
+                            Grid.Column="1"
+                            Grid.ColumnSpan="4"
+                            ToolTip="留空时自动检测 AtlasCore；例如 http://127.0.0.1:6324" />
             </Grid>
 
             <TextBlock Grid.Row="3" Text="本地工具与下载" Style="{StaticResource SectionTitleStyle}" />
@@ -109,7 +116,7 @@
                     <CheckBox x:Name="DeleteArchive" Content="解压成功后删除压缩包" Foreground="{StaticResource PrimaryTextBrush}" />
                     <CheckBox x:Name="SkipCompleted" Margin="24,0,0,0" Content="跳过本地完整资源" Foreground="{StaticResource PrimaryTextBrush}" />
                     <CheckBox x:Name="KeepSidecars" Margin="24,0,0,0" Content="保留附带文件" Foreground="{StaticResource PrimaryTextBrush}" />
-                    <CheckBox x:Name="UseProxy" Margin="24,0,0,0" Content="优先系统代理" Foreground="{StaticResource PrimaryTextBrush}" />
+                    <CheckBox x:Name="UseProxy" Margin="24,0,0,0" Content="优先代理（失败自动切换）" Foreground="{StaticResource PrimaryTextBrush}" />
                     <CheckBox x:Name="LowSpeedGuard" Margin="24,0,0,0" Content="启用低速重试" Foreground="{StaticResource PrimaryTextBrush}" />
                 </WrapPanel>
 

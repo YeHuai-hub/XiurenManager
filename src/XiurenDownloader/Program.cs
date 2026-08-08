@@ -617,6 +617,7 @@ internal sealed class Settings
     public int DownloadParallelism { get; set; } = 2;
     public int SingleFileParallelism { get; set; } = 10;
     public bool UseSystemProxy { get; set; } = false;
+    public string ProxyUrl { get; set; } = "";
     public bool LowSpeedGuardEnabled { get; set; } = true;
     public int LowSpeedThresholdKBps { get; set; } = 512;
     public int LowSpeedSeconds { get; set; } = 180;
@@ -889,36 +890,83 @@ internal sealed class ModelStat
 internal sealed class XiurenClient
 {
     private readonly Settings settings;
-    private readonly HttpClient directHttp;
-    private readonly HttpClient proxyHttp;
-    private HttpClient http;
-    private bool usingProxy;
-    private bool loggedIn;
+    private readonly List<NetworkRoute> routes;
+    private int routeIndex;
     private IProgress<string>? networkLog;
     private readonly SemaphoreSlim routeGate = new(1, 1);
 
     public XiurenClient(Settings settings)
     {
         this.settings = settings;
-        directHttp = CreateHttpClient(false);
-        proxyHttp = CreateHttpClient(true);
-        usingProxy = settings.UseSystemProxy;
-        http = usingProxy ? proxyHttp : directHttp;
+        routes = BuildRoutes(settings);
     }
 
-    private static HttpClient CreateHttpClient(bool useSystemProxy)
+    private static HttpClient CreateHttpClient(IWebProxy? proxy)
     {
         var handler = new HttpClientHandler
         {
             CookieContainer = new CookieContainer(),
             AutomaticDecompression = DecompressionMethods.All,
-            UseProxy = useSystemProxy
+            UseProxy = proxy != null,
+            Proxy = proxy
         };
-        if (useSystemProxy)
-            handler.Proxy = ReadWindowsProxy() ?? HttpClient.DefaultProxy;
         var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(25) };
         client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 XiurenDownloader/1.0");
         return client;
+    }
+
+    private static List<NetworkRoute> BuildRoutes(Settings settings)
+    {
+        var proxyRoutes = new List<NetworkRoute>();
+        var proxyAddresses = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddProxy(string name, IWebProxy? proxy)
+        {
+            if (proxy is not WebProxy webProxy || webProxy.Address == null) return;
+            var address = webProxy.Address.AbsoluteUri.TrimEnd('/');
+            if (!proxyAddresses.Add(address)) return;
+            proxyRoutes.Add(new NetworkRoute(name + " (" + address + ")", CreateHttpClient(proxy)));
+        }
+
+        AddProxy("设置代理", CreateProxy(settings.ProxyUrl));
+        AddProxy("系统代理", ReadWindowsProxy());
+        if (IsLocalPortListening(6324))
+            AddProxy("本地 AtlasCore", new WebProxy("http://127.0.0.1:6324", true));
+
+        var direct = new NetworkRoute("直连", CreateHttpClient(null));
+        if (settings.UseSystemProxy && proxyRoutes.Count > 0)
+        {
+            proxyRoutes.Add(direct);
+            return proxyRoutes;
+        }
+
+        proxyRoutes.Insert(0, direct);
+        return proxyRoutes;
+    }
+
+    private static IWebProxy? CreateProxy(string? raw)
+    {
+        raw = raw?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        if (!raw.Contains("://", StringComparison.Ordinal)) raw = "http://" + raw;
+        return Uri.TryCreate(raw, UriKind.Absolute, out var uri)
+            ? new WebProxy(uri, true)
+            : null;
+    }
+
+    private static bool IsLocalPortListening(int port)
+    {
+        try
+        {
+            return System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties()
+                .GetActiveTcpListeners()
+                .Any(endpoint => endpoint.Port == port &&
+                    (IPAddress.IsLoopback(endpoint.Address) || endpoint.Address.Equals(IPAddress.IPv6Any)));
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static IWebProxy? ReadWindowsProxy()
@@ -1093,29 +1141,31 @@ internal sealed class XiurenClient
         await routeGate.WaitAsync(ct);
         try
         {
-            if (loggedIn) return;
+            if (routes[routeIndex].LoggedIn) return;
 
-            Exception? firstError = null;
-            for (var routeAttempt = 0; routeAttempt < 2; routeAttempt++)
+            var errors = new List<RouteError>();
+            var indices = RouteIndicesFromCurrent();
+            foreach (var index in indices)
             {
+                routeIndex = index;
                 try
                 {
                     await LoginCurrentRouteAsync(ct);
-                    loggedIn = true;
+                    routes[routeIndex].LoggedIn = true;
                     networkLog?.Report("网站网络通道: " + RouteName());
                     return;
                 }
-                catch (Exception ex) when (ShouldRetry(ex, ct) && routeAttempt == 0)
-                {
-                    firstError = ex;
-                    SwitchRoute();
-                    networkLog?.Report("当前网络通道失败，自动切换为: " + RouteName());
-                }
                 catch (Exception ex) when (IsRequestFailure(ex, ct))
                 {
-                    throw new InvalidOperationException(BuildDualRouteError("网站登录", LoginUrl(), firstError, ex), ex);
+                    routes[routeIndex].LoggedIn = false;
+                    errors.Add(new RouteError(RouteName(), ex));
+                    if (errors.Count < indices.Count)
+                        networkLog?.Report("当前网络通道失败，自动切换下一条线路。");
                 }
             }
+
+            var last = errors.LastOrDefault()?.Error;
+            throw new InvalidOperationException(BuildRouteError("网站登录", LoginUrl(), errors), last);
         }
         finally
         {
@@ -1127,7 +1177,7 @@ internal sealed class XiurenClient
     {
         var url = LoginUrl();
         using var req = CreateLoginRequest(url);
-        using var resp = await http.SendAsync(req, ct);
+        using var resp = await routes[routeIndex].Client.SendAsync(req, ct);
         var text = await resp.Content.ReadAsStringAsync(ct);
         resp.EnsureSuccessStatusCode();
         using var doc = JsonDocument.Parse(text);
@@ -1298,66 +1348,69 @@ internal sealed class XiurenClient
 
     private async Task<string> GetStringWithContextAsync(string url, string operation, CancellationToken ct)
     {
-        Exception? firstError = null;
-        for (var routeAttempt = 0; routeAttempt < 2; routeAttempt++)
+        var errors = new List<RouteError>();
+        var indices = RouteIndicesFromCurrent();
+        foreach (var index in indices)
         {
             try
             {
-                return await http.GetStringAsync(url, ct);
+                await EnsureRouteReadyAsync(index, ct);
+                return await routes[index].Client.GetStringAsync(url, ct);
             }
             catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
             {
                 throw;
             }
-            catch (Exception ex) when (ShouldRetry(ex, ct) && routeAttempt == 0)
-            {
-                firstError = ex;
-                await SwitchRouteAndLoginAsync(ct);
-            }
             catch (Exception ex) when (IsRequestFailure(ex, ct))
             {
-                throw new InvalidOperationException(BuildDualRouteError(operation, url, firstError, ex), ex);
+                routes[index].LoggedIn = false;
+                errors.Add(new RouteError(routes[index].Name, ex));
+                if (errors.Count < indices.Count)
+                    networkLog?.Report($"{operation}失败，自动尝试下一条网络线路。");
             }
         }
-        throw new InvalidOperationException(operation + "失败: 系统代理和直连均不可用");
+        var last = errors.LastOrDefault()?.Error;
+        throw new InvalidOperationException(BuildRouteError(operation, url, errors), last);
     }
 
     private async Task<string> SendWithContextAsync(Func<HttpRequestMessage> requestFactory, string operation, string url, CancellationToken ct)
     {
-        Exception? firstError = null;
-        for (var routeAttempt = 0; routeAttempt < 2; routeAttempt++)
+        var errors = new List<RouteError>();
+        var indices = RouteIndicesFromCurrent();
+        foreach (var index in indices)
         {
             using var req = requestFactory();
             try
             {
-                using var resp = await http.SendAsync(req, ct);
+                await EnsureRouteReadyAsync(index, ct);
+                using var resp = await routes[index].Client.SendAsync(req, ct);
                 var text = await resp.Content.ReadAsStringAsync(ct);
                 if (!resp.IsSuccessStatusCode)
                     throw new InvalidOperationException($"{operation}失败: HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}{Environment.NewLine}{url}");
                 return text;
             }
-            catch (Exception ex) when (ShouldRetry(ex, ct) && routeAttempt == 0)
-            {
-                firstError = ex;
-                await SwitchRouteAndLoginAsync(ct);
-            }
             catch (Exception ex) when (IsRequestFailure(ex, ct))
             {
-                throw new InvalidOperationException(BuildDualRouteError(operation, url, firstError, ex), ex);
+                routes[index].LoggedIn = false;
+                errors.Add(new RouteError(routes[index].Name, ex));
+                if (errors.Count < indices.Count)
+                    networkLog?.Report($"{operation}失败，自动尝试下一条网络线路。");
             }
         }
-        throw new InvalidOperationException(operation + "失败: 系统代理和直连均不可用");
+        var last = errors.LastOrDefault()?.Error;
+        throw new InvalidOperationException(BuildRouteError(operation, url, errors), last);
     }
 
-    private async Task SwitchRouteAndLoginAsync(CancellationToken ct)
+    private async Task EnsureRouteReadyAsync(int index, CancellationToken ct)
     {
         await routeGate.WaitAsync(ct);
         try
         {
-            SwitchRoute();
-            networkLog?.Report("网络请求失败，自动切换为: " + RouteName());
+            routeIndex = index;
+            if (routes[index].LoggedIn) return;
+            networkLog?.Report("正在切换网络通道: " + RouteName());
             await LoginCurrentRouteAsync(ct);
-            loggedIn = true;
+            routes[index].LoggedIn = true;
             networkLog?.Report("网络通道切换成功: " + RouteName());
         }
         finally
@@ -1366,29 +1419,33 @@ internal sealed class XiurenClient
         }
     }
 
-    private void SwitchRoute()
+    private List<int> RouteIndicesFromCurrent()
     {
-        usingProxy = !usingProxy;
-        http = usingProxy ? proxyHttp : directHttp;
-        loggedIn = false;
+        var result = new List<int>(routes.Count);
+        for (var offset = 0; offset < routes.Count; offset++)
+            result.Add((routeIndex + offset) % routes.Count);
+        return result;
     }
 
-    private string RouteName() => usingProxy ? "系统代理" : "直连";
+    private string RouteName() => routes[routeIndex].Name;
 
-    private static string BuildDualRouteError(string operation, string url, Exception? first, Exception second)
+    private static string BuildRouteError(string operation, string url, IReadOnlyList<RouteError> errors)
     {
-        var firstText = first == null ? "未尝试" : ErrorText.Format(first).Replace(Environment.NewLine, " | ");
-        var secondText = ErrorText.Format(second).Replace(Environment.NewLine, " | ");
-        return $"{operation}失败: 系统代理和直连均不可用{Environment.NewLine}首次: {firstText}{Environment.NewLine}切换后: {secondText}{Environment.NewLine}{url}";
+        var details = errors.Count == 0
+            ? "未取得网络错误详情"
+            : string.Join(Environment.NewLine, errors.Select(error =>
+                $"{error.Route}: {ErrorText.Format(error.Error).Replace(Environment.NewLine, " | ")}"));
+        return $"{operation}失败: 所有网络通道均不可用{Environment.NewLine}{details}{Environment.NewLine}{url}";
     }
 
-    private static bool ShouldRetry(Exception ex, CancellationToken ct)
+    private sealed class NetworkRoute(string name, HttpClient client)
     {
-        if (ct.IsCancellationRequested) return false;
-        if (ex is HttpRequestException) return true;
-        if (ex is TaskCanceledException) return true;
-        return ex is InvalidOperationException ioe && ioe.Message.Contains("HTTP 5", StringComparison.OrdinalIgnoreCase);
+        public string Name { get; } = name;
+        public HttpClient Client { get; } = client;
+        public bool LoggedIn { get; set; }
     }
+
+    private sealed record RouteError(string Route, Exception Error);
 
     private static bool IsRequestFailure(Exception ex, CancellationToken ct)
     {

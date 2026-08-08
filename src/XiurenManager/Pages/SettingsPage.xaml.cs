@@ -59,6 +59,7 @@ public partial class SettingsPage : Page
         UserName.Text = settings.UserName;
         Password.Password = settings.Password;
         CategoryPath.Text = settings.CategoryPath;
+        ProxyUrl.Text = settings.ProxyUrl;
         DownloadRoot.Text = settings.DownloadRoot;
         ArchiveRoot.Text = settings.ArchiveRoot;
         BaiduPcs.Text = settings.BaiduPcsPath;
@@ -141,6 +142,7 @@ public partial class SettingsPage : Page
         settings.UserName = UserName.Text.Trim();
         settings.Password = Password.Password;
         settings.CategoryPath = string.IsNullOrWhiteSpace(CategoryPath.Text) ? "/tbgx" : CategoryPath.Text.Trim();
+        settings.ProxyUrl = NormalizeProxyUrl(ProxyUrl.Text);
         settings.DownloadRoot = libraryRoot;
         settings.ArchiveRoot = archiveRoot;
         settings.BaiduPcsPath = BaiduPcs.Text.Trim();
@@ -184,4 +186,14 @@ public partial class SettingsPage : Page
 
     private static int Number(string text, int fallback, int min, int max) =>
         int.TryParse(text, out var value) ? Math.Clamp(value, min, max) : fallback;
+
+    private static string NormalizeProxyUrl(string text)
+    {
+        var value = text.Trim();
+        if (string.IsNullOrWhiteSpace(value)) return "";
+        if (!value.Contains("://", StringComparison.Ordinal)) value = "http://" + value;
+        return Uri.TryCreate(value, UriKind.Absolute, out var uri)
+            ? uri.AbsoluteUri.TrimEnd('/')
+            : "";
+    }
 }
