@@ -414,6 +414,7 @@ public partial class ViewerWindow : FluentWindow
     {
         var value = state.Favorites.ChangeScore(set, delta);
         UpdateScore();
+        state.Metadata.QueueSync(set);
         state.WriteLog($"{set.Model} / {set.Title} 喜爱值已改为 {value}");
         state.NotifyDataChanged();
     }
@@ -512,6 +513,7 @@ public partial class ViewerWindow : FluentWindow
     private void SaveTags(string status)
     {
         state.Favorites.SetTags(set, tags);
+        state.Metadata.QueueSync(set);
         TagsStatus.Text = $"{status}  {DateTime.Now:HH:mm:ss}";
         state.WriteLog($"{set.Model} / {set.Title} 标签已更新");
         state.NotifyDataChanged();
@@ -642,6 +644,7 @@ public partial class ViewerWindow : FluentWindow
             set.TotalBytes = Math.Max(0, set.TotalBytes - bytes);
             set.LastScanned = DateTime.Now.ToString("s");
             state.Database.Save();
+            state.Metadata.QueueSync(set);
             state.WriteLog($"已从查看器删除媒体: {item.Path}");
             state.NotifyDataChanged();
 

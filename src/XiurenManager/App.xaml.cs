@@ -18,6 +18,16 @@ public partial class App : Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        if (e.Args.Any(arg =>
+                arg.Equals("--sync-set-metadata", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            await State.Metadata.QueueAllAsync(announce: true);
+            State.Metadata.Dispose();
+            Shutdown(0);
+            return;
+        }
+
         if (e.Args.Any(arg => arg.Equals("--scan-local", StringComparison.OrdinalIgnoreCase)))
         {
             LocalScanner.Scan(State, notify: false);

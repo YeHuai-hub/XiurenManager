@@ -11,10 +11,10 @@
     <Product>写真资源管理器</Product>
     <Description>写真资源下载、整理、浏览与收藏工具</Description>
     <Company>Private Local Tools</Company>
-    <Version>3.6.8</Version>
-    <AssemblyVersion>3.6.8.0</AssemblyVersion>
-    <FileVersion>3.6.8.0</FileVersion>
-    <InformationalVersion>3.6.8-private</InformationalVersion>
+    <Version>3.6.9</Version>
+    <AssemblyVersion>3.6.9.0</AssemblyVersion>
+    <FileVersion>3.6.9.0</FileVersion>
+    <InformationalVersion>3.6.9-private</InformationalVersion>
     <ApplicationIcon>..\XiurenDownloader\Assets\app.ico</ApplicationIcon>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>

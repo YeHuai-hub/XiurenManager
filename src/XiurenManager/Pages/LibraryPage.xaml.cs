@@ -688,6 +688,8 @@ public partial class LibraryPage : Page
         }
 
         state.Database.Save();
+        if (IsTrackedSetPath(target))
+            state.Metadata.QueueSync(item);
         state.WriteLog($"套图位置已更新: {oldPath} -> {target}");
         state.NotifyDataChanged();
     }
@@ -701,7 +703,7 @@ public partial class LibraryPage : Page
         }
 
         state.Database.LocalFiles.RemoveAll(x => PathsEqual(x.LocalDir, target));
-        state.Database.LocalFiles.Add(new LocalStat
+        var copied = new LocalStat
         {
             Category = TryGetTrackedLocation(
                 target,
@@ -718,8 +720,10 @@ public partial class LibraryPage : Page
             InvalidVideoCount = source.InvalidVideoCount,
             TotalBytes = source.TotalBytes,
             LastScanned = DateTime.Now.ToString("s")
-        });
+        };
+        state.Database.LocalFiles.Add(copied);
         state.Database.Save();
+        state.Metadata.QueueSync(copied);
         state.WriteLog($"套图统计已新增: {target}");
         state.NotifyDataChanged();
     }

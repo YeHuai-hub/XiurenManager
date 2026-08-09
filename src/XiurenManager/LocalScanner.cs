@@ -80,6 +80,7 @@ internal static class LocalScanner
             .ToList();
         ReconcileResourceLocations(state, token);
         state.Database.Save();
+        state.Metadata.QueueSync(state.Database.LocalFiles);
         var localCount = results.Values.Count(x => x.StorageTier == StorageTiers.Local);
         var archiveCount = results.Count - localCount;
         state.WriteLog($"资源库扫描完成: {results.Count} 套（本地 {localCount} / NAS {archiveCount}）");
@@ -183,6 +184,8 @@ internal static class LocalScanner
             .ToList();
         ReconcileResourceLocations(state, token, targetKeys);
         state.Database.Save();
+        state.Metadata.QueueSync(state.Database.LocalFiles.Where(item =>
+            targetKeys.Contains(ModelKey(item.Category, item.Model))));
         state.WriteLog($"资源库增量扫描完成: {targets.Length} 个模特。");
         if (notify)
             state.NotifyDataChanged();

@@ -21,7 +21,11 @@ internal static class MediaMaintenanceService
                      .Where(x => !AppPaths.IsInsideTool(x))
                      .Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            if (keep.Contains(Path.GetExtension(file))) continue;
+            if (keep.Contains(Path.GetExtension(file)) ||
+                SetMetadataSidecar.IsMetadataFile(file))
+            {
+                continue;
+            }
             try
             {
                 var info = new FileInfo(file);

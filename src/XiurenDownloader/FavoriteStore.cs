@@ -55,80 +55,103 @@ internal sealed class FavoriteStore
 
     public int GetScore(LocalStat item)
     {
-        return Find(item)?.Score ?? 0;
+        lock (FileGate)
+            return Find(item)?.Score ?? 0;
     }
 
     public IReadOnlyList<string> GetTags(LocalStat item)
     {
-        return Find(item)?.Tags?.ToArray() ?? [];
+        lock (FileGate)
+            return Find(item)?.Tags?.ToArray() ?? [];
+    }
+
+    public (int Score, IReadOnlyList<string> Tags) GetMetadata(LocalStat item)
+    {
+        lock (FileGate)
+        {
+            var entry = Find(item);
+            return (entry?.Score ?? 0, entry?.Tags?.ToArray() ?? []);
+        }
     }
 
     public (int Score, DateTime UpdatedAt) GetModelPriority(string model)
     {
-        var matches = entries.Where(x =>
-            x.Model.Equals(model, StringComparison.OrdinalIgnoreCase)).ToArray();
-        var updatedAt = matches
-            .Select(x => DateTime.TryParse(x.UpdatedAt, out var value) ? value : DateTime.MinValue)
-            .DefaultIfEmpty(DateTime.MinValue)
-            .Max();
-        return (matches.Sum(x => x.Score), updatedAt);
+        lock (FileGate)
+        {
+            var matches = entries.Where(x =>
+                x.Model.Equals(model, StringComparison.OrdinalIgnoreCase)).ToArray();
+            var updatedAt = matches
+                .Select(x => DateTime.TryParse(x.UpdatedAt, out var value) ? value : DateTime.MinValue)
+                .DefaultIfEmpty(DateTime.MinValue)
+                .Max();
+            return (matches.Sum(x => x.Score), updatedAt);
+        }
     }
 
     public int ChangeScore(LocalStat item, int delta)
     {
-        var entry = Find(item);
-        if (entry == null)
+        lock (FileGate)
         {
-            if (delta <= 0) return 0;
-            entry = new FavoriteEntry();
-            entries.Add(entry);
-        }
+            var entry = Find(item);
+            if (entry == null)
+            {
+                if (delta <= 0) return 0;
+                entry = new FavoriteEntry();
+                entries.Add(entry);
+            }
 
-        entry.LocalDir = NormalizePath(item.LocalDir);
-        entry.Model = item.Model;
-        entry.Title = item.Title;
-        entry.Score = Math.Max(0, entry.Score + delta);
-        entry.UpdatedAt = DateTime.Now.ToString("s");
-        var result = entry.Score;
-        if (entry.Score == 0 && entry.Tags.Count == 0)
-            entries.Remove(entry);
-        Save();
-        return result;
+            entry.LocalDir = NormalizePath(item.LocalDir);
+            entry.Model = item.Model;
+            entry.Title = item.Title;
+            entry.Score = Math.Max(0, entry.Score + delta);
+            entry.UpdatedAt = DateTime.Now.ToString("s");
+            var result = entry.Score;
+            if (entry.Score == 0 && entry.Tags.Count == 0)
+                entries.Remove(entry);
+            Save();
+            return result;
+        }
     }
 
     public IReadOnlyList<string> SetTags(LocalStat item, IEnumerable<string> tags)
     {
-        var values = NormalizeTags(tags);
-        var entry = Find(item);
-        if (entry == null)
+        lock (FileGate)
         {
-            if (values.Count == 0) return [];
-            entry = new FavoriteEntry();
-            entries.Add(entry);
-        }
+            var values = NormalizeTags(tags);
+            var entry = Find(item);
+            if (entry == null)
+            {
+                if (values.Count == 0) return [];
+                entry = new FavoriteEntry();
+                entries.Add(entry);
+            }
 
-        entry.LocalDir = NormalizePath(item.LocalDir);
-        entry.Model = item.Model;
-        entry.Title = item.Title;
-        entry.Tags = values;
-        entry.Note = null;
-        entry.UpdatedAt = DateTime.Now.ToString("s");
-        if (entry.Score == 0 && entry.Tags.Count == 0)
-            entries.Remove(entry);
-        Save();
-        return values.ToArray();
+            entry.LocalDir = NormalizePath(item.LocalDir);
+            entry.Model = item.Model;
+            entry.Title = item.Title;
+            entry.Tags = values;
+            entry.Note = null;
+            entry.UpdatedAt = DateTime.Now.ToString("s");
+            if (entry.Score == 0 && entry.Tags.Count == 0)
+                entries.Remove(entry);
+            Save();
+            return values.ToArray();
+        }
     }
 
     public void UpdateLocation(LocalStat item, string localDir, string model, string title)
     {
-        var entry = Find(item);
-        if (entry == null) return;
+        lock (FileGate)
+        {
+            var entry = Find(item);
+            if (entry == null) return;
 
-        entry.LocalDir = NormalizePath(localDir);
-        entry.Model = model;
-        entry.Title = title;
-        entry.UpdatedAt = DateTime.Now.ToString("s");
-        Save();
+            entry.LocalDir = NormalizePath(localDir);
+            entry.Model = model;
+            entry.Title = title;
+            entry.UpdatedAt = DateTime.Now.ToString("s");
+            Save();
+        }
     }
 
     public void UpdateModelLocations(
@@ -136,18 +159,21 @@ internal sealed class FavoriteStore
         string sourceRoot,
         string destinationRoot)
     {
-        var changed = false;
-        foreach (var entry in entries.Where(x =>
-                     x.Model.Equals(model, StringComparison.OrdinalIgnoreCase) &&
-                     IsInside(x.LocalDir, sourceRoot)))
+        lock (FileGate)
         {
-            entry.LocalDir = NormalizePath(Path.Combine(
-                destinationRoot,
-                Path.GetRelativePath(sourceRoot, entry.LocalDir)));
-            entry.UpdatedAt = DateTime.Now.ToString("s");
-            changed = true;
+            var changed = false;
+            foreach (var entry in entries.Where(x =>
+                         x.Model.Equals(model, StringComparison.OrdinalIgnoreCase) &&
+                         IsInside(x.LocalDir, sourceRoot)))
+            {
+                entry.LocalDir = NormalizePath(Path.Combine(
+                    destinationRoot,
+                    Path.GetRelativePath(sourceRoot, entry.LocalDir)));
+                entry.UpdatedAt = DateTime.Now.ToString("s");
+                changed = true;
+            }
+            if (changed) Save();
         }
-        if (changed) Save();
     }
 
     private FavoriteEntry? Find(LocalStat item)

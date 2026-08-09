@@ -12,7 +12,11 @@ public partial class MainWindow : FluentWindow
     {
         InitializeComponent();
         Loaded += OnLoaded;
-        Closed += (_, _) => App.State.Storage.Dispose();
+        Closed += (_, _) =>
+        {
+            App.State.Metadata.Dispose();
+            App.State.Storage.Dispose();
+        };
     }
 
     internal void NavigateToLibrary(LocalStat item)
@@ -45,6 +49,7 @@ public partial class MainWindow : FluentWindow
         finally
         {
             App.State.Storage.Start();
+            _ = App.State.Metadata.QueueStartupBackfillAsync();
         }
     }
 

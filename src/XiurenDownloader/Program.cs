@@ -837,21 +837,30 @@ internal sealed class Database
 
     public ResourceItem Upsert(ResourceItem item)
     {
-        var old = Resources.FirstOrDefault(x => x.DetailUrl.Equals(item.DetailUrl, StringComparison.OrdinalIgnoreCase));
-        if (old == null) { Resources.Add(item); return item; }
-        old.PostId = item.PostId;
-        old.Title = item.Title;
-        old.Model = item.Model;
-        old.Category = LibraryPaths.NormalizeCategory(item.Category);
-        old.CategorySource = item.CategorySource;
-        old.DetectedCategory = item.DetectedCategory;
-        old.PanUrl = item.PanUrl;
-        old.PanPassword = item.PanPassword;
-        old.ExtractPassword = item.ExtractPassword;
-        old.ResourceType = item.ResourceType;
-        old.Status = item.Status;
-        old.LastChecked = item.LastChecked;
-        return old;
+        lock (SaveGate)
+        {
+            var old = Resources.FirstOrDefault(x => x.DetailUrl.Equals(item.DetailUrl, StringComparison.OrdinalIgnoreCase));
+            if (old == null) { Resources.Add(item); return item; }
+            old.PostId = item.PostId;
+            old.Title = item.Title;
+            old.Model = item.Model;
+            old.Category = LibraryPaths.NormalizeCategory(item.Category);
+            old.CategorySource = item.CategorySource;
+            old.DetectedCategory = item.DetectedCategory;
+            old.PanUrl = item.PanUrl;
+            old.PanPassword = item.PanPassword;
+            old.ExtractPassword = item.ExtractPassword;
+            old.ResourceType = item.ResourceType;
+            old.Status = item.Status;
+            old.LastChecked = item.LastChecked;
+            return old;
+        }
+    }
+
+    public ResourceItem[] ResourceSnapshot()
+    {
+        lock (SaveGate)
+            return Resources.ToArray();
     }
 }
 
@@ -2600,6 +2609,9 @@ internal sealed class Downloader
     private static IEnumerable<string> ReadSidecarPasswords(string directory)
     {
         if (!Directory.Exists(directory)) yield break;
+        var metadataPassword = SetMetadataSidecar.ReadArchivePassword(directory);
+        if (!string.IsNullOrWhiteSpace(metadataPassword))
+            yield return metadataPassword;
         IEnumerable<string> files;
         try
         {
@@ -2635,6 +2647,7 @@ internal sealed class Downloader
         var mediaExts = settings.ImageExts.Concat(settings.VideoExts).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var f in EnumerateUserFiles(dir).Where(f =>
                      !Path.GetFileName(f).Equals(VideoValidator.InvalidMarkerName, StringComparison.OrdinalIgnoreCase) &&
+                     !SetMetadataSidecar.IsMetadataFile(f) &&
                      !mediaExts.Contains(Path.GetExtension(f)) &&
                      !IsArchive(f)))
             Try(() => File.Delete(f));
