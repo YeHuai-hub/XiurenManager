@@ -86,6 +86,11 @@ internal sealed class SetCardGroup
     public IReadOnlyList<SetCardRow> Items { get; init; } = [];
 }
 
+internal sealed record LibraryViewState(
+    string? SelectedModelKey,
+    double ModelScrollOffset,
+    double SetScrollOffset);
+
 public partial class LibraryPage : Page
 {
     private readonly AppState state = App.State;
@@ -96,6 +101,9 @@ public partial class LibraryPage : Page
     private bool fileOperationRunning;
     private bool categoryFilterLoading;
     private int filterVersion;
+    private bool viewerOpen;
+    private bool reloadAfterViewer;
+    private LibraryViewState? pendingViewRestore;
 
     public LibraryPage()
     {
@@ -119,12 +127,13 @@ public partial class LibraryPage : Page
         coverCts.Cancel();
     }
 
-    private void LoadLibrary()
+    private void LoadLibrary(LibraryViewState? restore = null)
     {
         ConstrainBodyToViewport();
+        pendingViewRestore = restore;
         var navigationTarget = state.ConsumeLibraryNavigation();
         var selected = navigationTarget == null
-            ? (ModelList.SelectedItem as ModelLibraryRow)?.Key
+            ? restore?.SelectedModelKey ?? (ModelList.SelectedItem as ModelLibraryRow)?.Key
             : navigationTarget.Category + "|" + navigationTarget.Model;
         var selectedCategory = navigationTarget?.Category ??
                                CategoryFilter.SelectedItem as string ??
@@ -203,7 +212,11 @@ public partial class LibraryPage : Page
             Dispatcher.BeginInvoke(() =>
             {
                 ModelList.UpdateLayout();
-                ModelList.ScrollIntoView(ModelList.SelectedItem);
+                var viewer = FindVisualChild<ScrollViewer>(ModelList);
+                if (restore != null && viewer != null)
+                    viewer.ScrollToVerticalOffset(restore.ModelScrollOffset);
+                else
+                    ModelList.ScrollIntoView(ModelList.SelectedItem);
             });
         }
     }
@@ -301,8 +314,18 @@ public partial class LibraryPage : Page
             ? Visibility.Visible
             : Visibility.Collapsed;
         RebuildCardGroups();
+        var restoreOffset = pendingViewRestore?.SetScrollOffset;
         Dispatcher.BeginInvoke(() =>
-            FindVisualChild<ScrollViewer>(SetCards)?.ScrollToTop());
+        {
+            var viewer = FindVisualChild<ScrollViewer>(SetCards);
+            if (viewer == null) return;
+            SetCards.UpdateLayout();
+            if (restoreOffset.HasValue)
+                viewer.ScrollToVerticalOffset(restoreOffset.Value);
+            else
+                viewer.ScrollToTop();
+            pendingViewRestore = null;
+        });
     }
 
     private void RebuildCardGroups()
@@ -368,7 +391,13 @@ public partial class LibraryPage : Page
 
     private void State_OnDataChanged(object? sender, EventArgs e)
     {
-        if (IsLoaded) LoadLibrary();
+        if (!IsLoaded) return;
+        if (viewerOpen)
+        {
+            reloadAfterViewer = true;
+            return;
+        }
+        LoadLibrary();
     }
 
     private void ModelList_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -411,13 +440,35 @@ public partial class LibraryPage : Page
     private void SetCard_OnClick(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: LocalStat item }) return;
+        var viewState = CaptureViewState();
         var context = currentCards.Select(card => card.Item).ToArray();
         var viewer = new ViewerWindow(item, context)
         {
             Owner = Window.GetWindow(this)
         };
-        viewer.ShowDialog();
-        LoadLibrary();
+        viewerOpen = true;
+        reloadAfterViewer = false;
+        try
+        {
+            viewer.ShowDialog();
+        }
+        finally
+        {
+            viewerOpen = false;
+        }
+        if (reloadAfterViewer)
+        {
+            reloadAfterViewer = false;
+            LoadLibrary(viewState);
+        }
+    }
+
+    private LibraryViewState CaptureViewState()
+    {
+        return new LibraryViewState(
+            (ModelList.SelectedItem as ModelLibraryRow)?.Key,
+            FindVisualChild<ScrollViewer>(ModelList)?.VerticalOffset ?? 0,
+            FindVisualChild<ScrollViewer>(SetCards)?.VerticalOffset ?? 0);
     }
 
     private void ManageSet_OnClick(object sender, RoutedEventArgs e)

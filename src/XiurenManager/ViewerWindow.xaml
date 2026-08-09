@@ -20,7 +20,10 @@
             <RowDefinition x:Name="ControlsRow" Height="58" />
         </Grid.RowDefinitions>
 
-        <Grid x:Name="ViewerHeader" Margin="16,0">
+        <Grid x:Name="ViewerHeader"
+              Margin="16,0"
+              Background="Transparent"
+              MouseLeftButtonDown="ViewerHeader_OnMouseLeftButtonDown">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
@@ -65,6 +68,25 @@
                            Foreground="{StaticResource SecondaryTextBrush}"
                            FontSize="11"
                            VerticalAlignment="Center" />
+                <ui:Button Margin="0,0,8,0"
+                           ToolTip="打开当前套图目录"
+                           Icon="{ui:SymbolIcon FolderOpen24}"
+                           Click="OpenSetFolder_OnClick" />
+                <ui:Button x:Name="MediaActionsButton"
+                           Margin="0,0,8,0"
+                           ToolTip="媒体与套图操作"
+                           Icon="{ui:SymbolIcon MoreVertical24}"
+                           Click="MediaActions_OnClick">
+                    <ui:Button.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="删除当前图片或视频"
+                                      Click="DeleteCurrentMedia_OnClick" />
+                            <Separator />
+                            <MenuItem Header="删除整套写真"
+                                      Click="DeleteCurrentSet_OnClick" />
+                        </ContextMenu>
+                    </ui:Button.ContextMenu>
+                </ui:Button>
                 <ui:Button Margin="0,0,12,0"
                            Content="标签"
                            Icon="{ui:SymbolIcon Tag24}"

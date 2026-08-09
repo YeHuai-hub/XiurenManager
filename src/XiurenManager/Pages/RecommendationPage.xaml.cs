@@ -45,6 +45,7 @@ public partial class RecommendationPage : Page
     private LocalStat? recommendation;
     private bool hasRecommended;
     private bool suppressPreviewSelection;
+    private bool viewerOpen;
 
     public RecommendationPage()
     {
@@ -82,6 +83,7 @@ public partial class RecommendationPage : Page
 
     private void State_OnDataChanged(object? sender, EventArgs e)
     {
+        if (viewerOpen) return;
         if (recommendation == null || !Directory.Exists(recommendation.LocalDir))
             PickRecommendation();
     }
@@ -222,7 +224,7 @@ public partial class RecommendationPage : Page
         PickRecommendation();
     }
 
-    private void Watch_OnClick(object sender, RoutedEventArgs e)
+    private async void Watch_OnClick(object sender, RoutedEventArgs e)
     {
         if (recommendation == null) return;
         var context = state.Database.LocalFiles
@@ -230,15 +232,37 @@ public partial class RecommendationPage : Page
             .OrderBy(item => item.Model)
             .ThenBy(item => item.Title)
             .ToArray();
-        new ViewerWindow(
+        var viewer = new ViewerWindow(
             recommendation,
             context,
             ViewerSetNavigationMode.Random)
         {
             Owner = Window.GetWindow(this)
-        }.ShowDialog();
-        ScoreText.Text = $"喜爱值  {state.Favorites.GetScore(recommendation)}";
-        TagItems.ItemsSource = state.Favorites.GetTags(recommendation);
+        };
+        viewer.CurrentSetChanged += nextSet =>
+        {
+            recommendation = nextSet;
+            ShowRecommendation(nextSet);
+            _ = LoadRecommendationVisualsAsync(nextSet);
+        };
+        viewerOpen = true;
+        try
+        {
+            viewer.ShowDialog();
+        }
+        finally
+        {
+            viewerOpen = false;
+        }
+        if (!Directory.Exists(viewer.CurrentSet.LocalDir) ||
+            !HasUsableMedia(viewer.CurrentSet))
+        {
+            PickRecommendation();
+            return;
+        }
+        recommendation = viewer.CurrentSet;
+        ShowRecommendation(recommendation);
+        await LoadRecommendationVisualsAsync(recommendation);
     }
 
     private void OpenFolder_OnClick(object sender, RoutedEventArgs e)

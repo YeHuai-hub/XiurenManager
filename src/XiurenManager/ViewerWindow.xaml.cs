@@ -1,6 +1,11 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Input;
+using FileSystem = Microsoft.VisualBasic.FileIO.FileSystem;
+using RecycleOption = Microsoft.VisualBasic.FileIO.RecycleOption;
+using UICancelOption = Microsoft.VisualBasic.FileIO.UICancelOption;
+using UIOption = Microsoft.VisualBasic.FileIO.UIOption;
 using System.Windows.Threading;
 using LibVLCSharp.Shared;
 using Wpf.Ui.Controls;
@@ -40,6 +45,9 @@ public partial class ViewerWindow : FluentWindow
     private bool immersive;
     private bool initialSetLoaded;
     private int imageLoadVersion;
+
+    internal LocalStat CurrentSet => set;
+    internal event Action<LocalStat>? CurrentSetChanged;
 
     internal ViewerWindow(
         LocalStat set,
@@ -116,6 +124,7 @@ public partial class ViewerWindow : FluentWindow
 
     private void LoadSet(LocalStat nextSet, bool selectLast, bool writeLog = true)
     {
+        var previousSet = set;
         slideshowTimer.Stop();
         StopPlayback();
         imageLoadVersion++;
@@ -131,6 +140,9 @@ public partial class ViewerWindow : FluentWindow
         TagsStatus.Text = tags.Count == 0 ? "暂无标签" : $"已有 {tags.Count} 个标签";
         UpdateScore();
         LoadMedia(selectLast);
+
+        if (!SameSet(previousSet, set))
+            CurrentSetChanged?.Invoke(set);
 
         if (writeLog)
             state.WriteLog($"切换浏览套图: {set.Model} / {set.Title}");
@@ -556,6 +568,163 @@ public partial class ViewerWindow : FluentWindow
     {
         if (e.ClickCount == 2)
             ToggleImmersive();
+    }
+
+    private void ViewerHeader_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Left || e.ClickCount != 1) return;
+        var current = e.OriginalSource as DependencyObject;
+        while (current != null && current != ViewerHeader)
+        {
+            if (current is System.Windows.Controls.Primitives.ButtonBase or
+                System.Windows.Controls.Slider or
+                System.Windows.Controls.Primitives.ToggleButton)
+            {
+                return;
+            }
+            current = System.Windows.Media.VisualTreeHelper.GetParent(current);
+        }
+
+        try
+        {
+            DragMove();
+            e.Handled = true;
+        }
+        catch (InvalidOperationException) { }
+    }
+
+    private void OpenSetFolder_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (!Directory.Exists(set.LocalDir)) return;
+        var start = new ProcessStartInfo("explorer.exe") { UseShellExecute = true };
+        start.ArgumentList.Add(set.LocalDir);
+        Process.Start(start);
+    }
+
+    private void MediaActions_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Wpf.Ui.Controls.Button { ContextMenu: { } menu } button) return;
+        menu.PlacementTarget = button;
+        menu.IsOpen = true;
+        e.Handled = true;
+    }
+
+    private async void DeleteCurrentMedia_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (Filmstrip.SelectedItem is not ViewerMediaRow item || !File.Exists(item.Path)) return;
+        if (System.Windows.MessageBox.Show(
+                this,
+                $"确定删除当前{(item.IsVideo ? "视频" : "图片")}吗？\n\n{item.Name}\n\n文件将被送入回收站。",
+                "删除当前媒体",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning) != System.Windows.MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        var index = Filmstrip.SelectedIndex;
+        var bytes = new FileInfo(item.Path).Length;
+        PrepareCurrentMediaForDeletion();
+        MediaActionsButton.IsEnabled = false;
+        try
+        {
+            await Task.Run(() => FileSystem.DeleteFile(
+                item.Path,
+                UIOption.OnlyErrorDialogs,
+                RecycleOption.SendToRecycleBin,
+                UICancelOption.ThrowException));
+
+            media.Remove(item);
+            if (item.IsVideo)
+                set.VideoCount = Math.Max(0, set.VideoCount - 1);
+            else
+                set.ImageCount = Math.Max(0, set.ImageCount - 1);
+            set.TotalBytes = Math.Max(0, set.TotalBytes - bytes);
+            set.LastScanned = DateTime.Now.ToString("s");
+            state.Database.Save();
+            state.WriteLog($"已从查看器删除媒体: {item.Path}");
+            state.NotifyDataChanged();
+
+            if (media.Count == 0)
+            {
+                MediaTitle.Text = "0 / 0";
+                ViewerMessage.Text = "这套目录内已经没有图片或视频";
+                ViewerMessage.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                Filmstrip.SelectedIndex = Math.Min(index, media.Count - 1);
+                Filmstrip.ScrollIntoView(Filmstrip.SelectedItem);
+            }
+        }
+        catch (Exception ex)
+        {
+            state.WriteLog($"查看器删除媒体失败: {item.Path} | {ex.Message}");
+            System.Windows.MessageBox.Show(
+                this,
+                ErrorText.Format(ex),
+                "删除失败",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Error);
+            if (index >= 0 && index < media.Count)
+                ShowMedia(index);
+        }
+        finally
+        {
+            MediaActionsButton.IsEnabled = true;
+        }
+    }
+
+    private async void DeleteCurrentSet_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (!Directory.Exists(set.LocalDir)) return;
+        if (System.Windows.MessageBox.Show(
+                this,
+                $"确定删除整套写真吗？\n\n{set.Title}\n\n整个目录将被送入回收站。",
+                "删除整套写真",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning) != System.Windows.MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        var path = set.LocalDir;
+        PrepareCurrentMediaForDeletion();
+        MediaActionsButton.IsEnabled = false;
+        try
+        {
+            await Task.Run(() => FileSystem.DeleteDirectory(
+                path,
+                UIOption.OnlyErrorDialogs,
+                RecycleOption.SendToRecycleBin,
+                UICancelOption.ThrowException));
+            state.Database.LocalFiles.RemoveAll(item => SameSet(item, set));
+            state.Database.Save();
+            state.WriteLog($"已从查看器删除整套写真: {path}");
+            state.NotifyDataChanged();
+            Close();
+        }
+        catch (Exception ex)
+        {
+            state.WriteLog($"查看器删除套图失败: {path} | {ex.Message}");
+            System.Windows.MessageBox.Show(
+                this,
+                ErrorText.Format(ex),
+                "删除失败",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Error);
+            MediaActionsButton.IsEnabled = true;
+            if (Filmstrip.SelectedIndex >= 0)
+                ShowMedia(Filmstrip.SelectedIndex);
+        }
+    }
+
+    private void PrepareCurrentMediaForDeletion()
+    {
+        slideshowTimer.Stop();
+        imageLoadVersion++;
+        StopPlayback();
+        ImageViewer.Source = null;
     }
 
     private void Immersive_OnClick(object sender, RoutedEventArgs e) => ToggleImmersive();
