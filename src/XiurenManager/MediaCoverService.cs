@@ -11,6 +11,7 @@ namespace XiurenManager;
 internal static class MediaCoverService
 {
     private static readonly SemaphoreSlim LoadGate = new(3, 3);
+    private static readonly SemaphoreSlim ViewerLoadGate = new(1, 1);
     private static readonly ConcurrentDictionary<string, WeakReference<ImageSource>> CoverCache = new();
 
     public static async Task<ImageSource?> LoadCoverAsync(
@@ -215,14 +216,38 @@ internal static class MediaCoverService
 
     public static async Task<BitmapSource> LoadViewerImageAsync(string path, Settings settings, CancellationToken token)
     {
+        await ViewerLoadGate.WaitAsync(token).ConfigureAwait(false);
         try
         {
-            return await Task.Run(() => LoadFullImage(path), token);
+            try
+            {
+                return await Task.Run(() =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    var image = LoadFullImage(path);
+                    token.ThrowIfCancellationRequested();
+                    return image;
+                }, token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                var converted = await ConvertViewerImageAsync(path, settings, token).ConfigureAwait(false);
+                return await Task.Run(() =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    var image = LoadFullImage(converted);
+                    token.ThrowIfCancellationRequested();
+                    return image;
+                }, token).ConfigureAwait(false);
+            }
         }
-        catch
+        finally
         {
-            var converted = await ConvertViewerImageAsync(path, settings, token);
-            return await Task.Run(() => LoadFullImage(converted), token);
+            ViewerLoadGate.Release();
         }
     }
 

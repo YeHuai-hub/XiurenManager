@@ -18,6 +18,29 @@ public partial class App : Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        var viewSetIndex = Array.FindIndex(e.Args, arg =>
+            arg.Equals("--view-set", StringComparison.OrdinalIgnoreCase));
+        if (viewSetIndex >= 0 && viewSetIndex + 1 < e.Args.Length)
+        {
+            base.OnStartup(e);
+            var requestedPath = Path.GetFullPath(e.Args[viewSetIndex + 1]);
+            var requestedSet = State.Database.LocalFiles.FirstOrDefault(item =>
+                Path.GetFullPath(item.LocalDir)
+                    .Equals(requestedPath, StringComparison.OrdinalIgnoreCase));
+            if (requestedSet == null)
+            {
+                MessageBox.Show($"未在媒体库中找到套图：{requestedPath}", "诊断启动失败");
+                Shutdown(2);
+                return;
+            }
+
+            var viewer = new ViewerWindow(requestedSet);
+            ShutdownMode = ShutdownMode.OnMainWindowClose;
+            MainWindow = viewer;
+            viewer.Show();
+            return;
+        }
+
         if (e.Args.Any(arg =>
                 arg.Equals("--sync-set-metadata", StringComparison.OrdinalIgnoreCase)))
         {

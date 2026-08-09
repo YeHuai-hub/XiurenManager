@@ -10,6 +10,7 @@ using System.Windows.Threading;
 using LibVLCSharp.Shared;
 using Wpf.Ui.Controls;
 using XiurenDownloader;
+using XiurenManager.Controls;
 
 namespace XiurenManager;
 
@@ -38,13 +39,16 @@ public partial class ViewerWindow : FluentWindow
     private readonly ObservableCollection<string> tags = [];
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(300) };
     private readonly DispatcherTimer slideshowTimer = new();
+    private CancellationTokenSource? mediaLoadCts;
     private LibVLC? libVlc;
     private MediaPlayer? player;
     private Media? playingMedia;
+    private VlcFramePresenter? framePresenter;
     private bool draggingPosition;
     private bool immersive;
     private bool initialSetLoaded;
     private int imageLoadVersion;
+    private WindowState windowStateBeforeImmersive = WindowState.Normal;
 
     internal LocalStat CurrentSet => set;
     internal event Action<LocalStat>? CurrentSetChanged;
@@ -82,6 +86,7 @@ public partial class ViewerWindow : FluentWindow
         Closed += (_, _) =>
         {
             slideshowTimer.Stop();
+            CancelMediaLoad();
             state.Settings.SlideshowSeconds = AutoPlaySpeed.Value;
             state.Settings.Save();
             state.WriteLog($"关闭浏览器: {set.Model} / {set.Title}");
@@ -105,14 +110,15 @@ public partial class ViewerWindow : FluentWindow
             Core.Initialize();
             libVlc = new LibVLC("--no-video-title-show", "--quiet");
             player = new MediaPlayer(libVlc) { Volume = (int)VolumeSlider.Value };
-            VideoViewer.MediaPlayer = player;
+            framePresenter = new VlcFramePresenter(VideoFrame);
+            framePresenter.Attach(player);
             player.Playing += (_, _) => Dispatcher.BeginInvoke(() => PlayPause.Icon = new SymbolIcon(SymbolRegular.Pause24));
             player.Paused += (_, _) => Dispatcher.BeginInvoke(() => PlayPause.Icon = new SymbolIcon(SymbolRegular.Play24));
             player.EndReached += (_, _) => Dispatcher.BeginInvoke(() => PlayPause.Icon = new SymbolIcon(SymbolRegular.Replay24));
             player.EncounteredError += (_, _) => Dispatcher.BeginInvoke(() =>
             {
-                ViewerMessage.Text = "视频无法播放，请在统计页检查文件完整性";
-                ViewerMessage.Visibility = Visibility.Visible;
+                if (VideoHost.Visibility == Visibility.Visible)
+                    ShowVideoError("视频无法播放，请在统计页检查文件完整性");
             });
         }
         catch (Exception ex)
@@ -126,7 +132,9 @@ public partial class ViewerWindow : FluentWindow
     {
         var previousSet = set;
         slideshowTimer.Stop();
+        CancelMediaLoad();
         StopPlayback();
+        HideVideoSurface();
         imageLoadVersion++;
         media.Clear();
         tags.Clear();
@@ -174,8 +182,10 @@ public partial class ViewerWindow : FluentWindow
     private async void ShowMedia(int index)
     {
         if (index < 0 || index >= media.Count) return;
+        var loadToken = BeginMediaLoad();
         slideshowTimer.Stop();
         var item = media[index];
+        UpdateCanvasNavigationVisibility(item);
         var setPosition = setContext.Count > 1 ? $"套图 {setIndex + 1} / {setContext.Count}    " : "";
         MediaTitle.Text = $"{setPosition}{index + 1} / {media.Count}    {item.Name}";
         ViewerMessage.Text = "正在载入";
@@ -189,18 +199,23 @@ public partial class ViewerWindow : FluentWindow
         imageLoadVersion++;
         var version = imageLoadVersion;
         StopPlayback();
-        VideoViewer.Visibility = Visibility.Collapsed;
+        HideVideoSurface();
+        ImageViewer.Source = null;
         ImageViewer.Visibility = Visibility.Visible;
         try
         {
             var source = await MediaCoverService.LoadViewerImageAsync(
                 item.Path,
                 state.Settings,
-                CancellationToken.None);
+                loadToken);
             if (version != imageLoadVersion) return;
             ImageViewer.Source = source;
             ViewerMessage.Visibility = Visibility.Collapsed;
             RestartSlideshow();
+        }
+        catch (OperationCanceledException)
+        {
+            return;
         }
         catch (Exception ex)
         {
@@ -210,16 +225,32 @@ public partial class ViewerWindow : FluentWindow
         }
     }
 
+    private CancellationToken BeginMediaLoad()
+    {
+        CancelMediaLoad();
+        mediaLoadCts = new CancellationTokenSource();
+        return mediaLoadCts.Token;
+    }
+
+    private void CancelMediaLoad()
+    {
+        var previous = mediaLoadCts;
+        mediaLoadCts = null;
+        if (previous == null) return;
+        previous.Cancel();
+        previous.Dispose();
+    }
+
     private void ShowVideo(string path)
     {
         imageLoadVersion++;
+        StopPlayback();
         ImageViewer.Source = null;
         ImageViewer.Visibility = Visibility.Collapsed;
-        VideoViewer.Visibility = Visibility.Visible;
-        StopPlayback();
+        VideoHost.Visibility = Visibility.Visible;
         if (libVlc == null || player == null)
         {
-            ViewerMessage.Text = "视频播放器未初始化";
+            ShowVideoError("视频播放器未初始化");
             return;
         }
         try
@@ -231,9 +262,24 @@ public partial class ViewerWindow : FluentWindow
         }
         catch (Exception ex)
         {
-            ViewerMessage.Text = "视频无法播放：" + ex.Message;
-            ViewerMessage.Visibility = Visibility.Visible;
+            ShowVideoError("视频无法播放：" + ex.Message);
         }
+    }
+
+    private void ShowVideoError(string message)
+    {
+        StopPlayback();
+        HideVideoSurface();
+        ImageViewer.Source = null;
+        ImageViewer.Visibility = Visibility.Collapsed;
+        ViewerMessage.Text = message;
+        ViewerMessage.Visibility = Visibility.Visible;
+    }
+
+    private void HideVideoSurface()
+    {
+        framePresenter?.ClearFrame();
+        VideoHost.Visibility = Visibility.Collapsed;
     }
 
     private void Filmstrip_OnSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -432,6 +478,7 @@ public partial class ViewerWindow : FluentWindow
             return;
         }
 
+        TagsColumn.Width = new GridLength(418);
         TagsPanel.Visibility = Visibility.Visible;
         TagEditor.Focus();
     }
@@ -444,6 +491,7 @@ public partial class ViewerWindow : FluentWindow
     private void CloseTags()
     {
         TagsPanel.Visibility = Visibility.Collapsed;
+        TagsColumn.Width = new GridLength(0);
         Focus();
     }
 
@@ -725,8 +773,10 @@ public partial class ViewerWindow : FluentWindow
     private void PrepareCurrentMediaForDeletion()
     {
         slideshowTimer.Stop();
+        CancelMediaLoad();
         imageLoadVersion++;
         StopPlayback();
+        HideVideoSurface();
         ImageViewer.Source = null;
     }
 
@@ -735,17 +785,35 @@ public partial class ViewerWindow : FluentWindow
     private void ToggleImmersive()
     {
         if (!immersive)
+        {
             CloseTags();
+            windowStateBeforeImmersive = WindowState;
+        }
         immersive = !immersive;
-        HeaderRow.Height = immersive ? new GridLength(0) : new GridLength(54);
+        HeaderRow.Height = immersive ? new GridLength(42) : new GridLength(54);
         FilmstripRow.Height = immersive ? new GridLength(0) : new GridLength(88);
         ControlsRow.Height = immersive ? new GridLength(0) : new GridLength(58);
         ViewerHeader.Visibility = immersive ? Visibility.Collapsed : Visibility.Visible;
+        ImmersiveHeader.Visibility = immersive ? Visibility.Visible : Visibility.Collapsed;
         Filmstrip.Visibility = immersive ? Visibility.Collapsed : Visibility.Visible;
         PlaybackControls.Visibility = immersive ? Visibility.Collapsed : Visibility.Visible;
-        CanvasPrevious.Visibility = immersive ? Visibility.Collapsed : Visibility.Visible;
-        CanvasNext.Visibility = immersive ? Visibility.Collapsed : Visibility.Visible;
-        WindowState = immersive ? WindowState.Maximized : WindowState.Normal;
+        UpdateCanvasNavigationVisibility(Filmstrip.SelectedItem as ViewerMediaRow);
+        WindowState = immersive ? WindowState.Maximized : windowStateBeforeImmersive;
+        Dispatcher.BeginInvoke(() =>
+        {
+            Activate();
+            ViewerRoot.Focus();
+            Keyboard.Focus(ViewerRoot);
+        }, DispatcherPriority.Input);
+    }
+
+    private void UpdateCanvasNavigationVisibility(ViewerMediaRow? item)
+    {
+        var visibility = !immersive && item != null
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        CanvasPrevious.Visibility = visibility;
+        CanvasNext.Visibility = visibility;
     }
 
     private void ViewerWindow_OnKeyDown(object sender, KeyEventArgs e)
@@ -789,6 +857,7 @@ public partial class ViewerWindow : FluentWindow
         timer.Stop();
         StopPlayback();
         player?.Dispose();
+        framePresenter?.Dispose();
         libVlc?.Dispose();
     }
 
