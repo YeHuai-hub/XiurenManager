@@ -54,7 +54,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "Inno Setup compilation failed with exit code $LASTEXITCODE"
 }
 
-$output = Get-ChildItem -LiteralPath $outputDir -Filter "*Setup-3.6.6.exe" |
+$output = Get-ChildItem -LiteralPath $outputDir -Filter "*Setup-3.6.7.exe" |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
 if (!$output) {

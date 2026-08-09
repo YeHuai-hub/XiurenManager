@@ -24,6 +24,9 @@ internal static class Program
         if (args.Any(x => x.Equals("--download-ready", StringComparison.OrdinalIgnoreCase)))
             return Headless.DownloadReadyAsync(args).GetAwaiter().GetResult();
 
+        if (args.Any(x => x.Equals("--repair-local-archives", StringComparison.OrdinalIgnoreCase)))
+            return Headless.RepairLocalArchivesAsync(args).GetAwaiter().GetResult();
+
         ApplicationConfiguration.Initialize();
         Application.Run(new MainForm());
         return 0;
@@ -141,6 +144,35 @@ internal static class Headless
         catch (Exception ex)
         {
             WriteLog("离线下载失败: " + ErrorText.Format(ex).Replace(Environment.NewLine, " | "));
+            return 1;
+        }
+    }
+
+    public static async Task<int> RepairLocalArchivesAsync(string[] args)
+    {
+        AppPaths.Ensure();
+        try
+        {
+            var settings = Settings.Load();
+            var db = Database.Load();
+            var model = GetArgValue(args, "--model");
+            var postId = GetArgValue(args, "--post-id");
+            var items = db.Resources
+                .Where(x => string.IsNullOrWhiteSpace(model) ||
+                            x.Model.Equals(XiurenClient.Safe(model), StringComparison.OrdinalIgnoreCase))
+                .Where(x => string.IsNullOrWhiteSpace(postId) ||
+                            x.PostId.Equals(postId.Trim(), StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            var result = await new Downloader(settings, db, new Progress<string>(WriteLog))
+                .RepairLocalArchivesAsync(items, CancellationToken.None);
+            db.Save();
+            WriteLog($"本地压缩内容修复结束：检查 {result.CheckedDirectories} 个目录，成功 {result.RepairedDirectories} 个，失败 {result.FailedDirectories} 个。");
+            return result.FailedDirectories == 0 ? 0 : 1;
+        }
+        catch (Exception ex)
+        {
+            WriteLog("本地压缩内容修复失败: " + ErrorText.Format(ex).Replace(Environment.NewLine, " | "));
             return 1;
         }
     }
@@ -638,7 +670,7 @@ internal sealed class Settings
     public bool KeepSidecarFiles { get; set; } = false;
     public string[] ImageExts { get; set; } = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".heic", ".avif"];
     public string[] VideoExts { get; set; } = [".mp4", ".mov", ".mkv", ".avi", ".wmv", ".m4v", ".flv", ".webm", ".ts"];
-    public string[] ArchiveExts { get; set; } = [".zip", ".rar", ".7z", ".gz", ".tar", ".001", ".wim", ".iso"];
+    public string[] ArchiveExts { get; set; } = [".zip", ".rar", ".7z", ".gz", ".tar", ".001", ".wim", ".iso", ".xz", ".bz2", ".tgz", ".tbz", ".tbz2", ".zst", ".cab"];
 
     public static JsonSerializerOptions JsonOptions => new()
     {
@@ -733,6 +765,11 @@ internal sealed class Settings
         LegacyDownloadRoots = (LegacyDownloadRoots ?? [])
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Select(x => Path.GetFullPath(x.Trim()))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        ArchiveExts = (ArchiveExts ?? [])
+            .Concat([".zip", ".rar", ".7z", ".gz", ".tar", ".001", ".wim", ".iso", ".xz", ".bz2", ".tgz", ".tbz", ".tbz2", ".zst", ".cab"])
+            .Select(x => x.StartsWith('.') ? x : "." + x)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
@@ -1556,6 +1593,11 @@ internal sealed record DownloadRunResult(
     public bool IsComplete => FailedGroups == 0 && DeferredGroups == 0;
 }
 
+internal sealed record LocalArchiveRepairResult(
+    int CheckedDirectories,
+    int RepairedDirectories,
+    int FailedDirectories);
+
 internal sealed record DownloadProgressSnapshot(
     int TotalGroups,
     int CompletedGroups,
@@ -1602,6 +1644,91 @@ internal sealed class Downloader
         this.db = db;
         this.log = log;
         this.progress = progress;
+    }
+
+    public async Task<LocalArchiveRepairResult> RepairLocalArchivesAsync(
+        IEnumerable<ResourceItem> resources,
+        CancellationToken ct)
+    {
+        Need(settings.SevenZipPath, "7-Zip");
+        var candidates = resources
+            .Where(item =>
+                !item.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase) ||
+                !item.ExtractStatus.Equals("Extracted", StringComparison.OrdinalIgnoreCase))
+            .Select(item => new
+            {
+                Item = item,
+                Directory = CandidateLocalDirectory(item)
+            })
+            .Where(x => !string.IsNullOrWhiteSpace(x.Directory))
+            .GroupBy(x => x.Directory!, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var checkedDirectories = 0;
+        var repairedDirectories = 0;
+        var failedDirectories = 0;
+
+        foreach (var group in candidates)
+        {
+            ct.ThrowIfCancellationRequested();
+            var directory = group.Key;
+            if (!Directory.Exists(directory) || !HasArchives(directory) || HasIncompleteDownloads(directory)) continue;
+
+            var item = group
+                .Select(x => x.Item)
+                .OrderBy(x => x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+                .First();
+            checkedDirectories++;
+            try
+            {
+                var expected = ExpectedMediaCount(item.Title);
+                var mediaBefore = CountMediaFiles(directory);
+                log.Report(expected > 0
+                    ? $"修复未完整解压目录: {item.Title}（当前 {mediaBefore}/{expected}）"
+                    : $"修复含压缩内容的目录: {item.Title}");
+                if (item.Error.Contains("解压失败", StringComparison.OrdinalIgnoreCase) ||
+                    NeedsExtractPasswordRefresh(item))
+                    await RefreshMissingPanPasswordAsync(item, ct);
+                await FinalizeLocalFiles(item, directory, ct);
+
+                foreach (var entry in group.Select(x => x.Item))
+                {
+                    entry.Status = "Ready";
+                    entry.LocalDir = directory;
+                    entry.DownloadStatus = "Downloaded";
+                    entry.ExtractStatus = "Extracted";
+                    entry.Error = "";
+                }
+                db.Save();
+                repairedDirectories++;
+            }
+            catch (Exception ex)
+            {
+                foreach (var entry in group.Select(x => x.Item))
+                {
+                    entry.Status = "Ready";
+                    entry.DownloadStatus = "Failed";
+                    entry.ExtractStatus = "";
+                    entry.Error = ex.Message;
+                }
+                db.Save();
+                failedDirectories++;
+                log.Report($"本地压缩内容仍未修复: {item.Title} | {ex.Message}");
+            }
+        }
+
+        return new LocalArchiveRepairResult(
+            checkedDirectories,
+            repairedDirectories,
+            failedDirectories);
+    }
+
+    private string? CandidateLocalDirectory(ResourceItem item)
+    {
+        if (!string.IsNullOrWhiteSpace(item.LocalDir))
+            return Path.GetFullPath(item.LocalDir);
+        if (string.IsNullOrWhiteSpace(item.Model) || string.IsNullOrWhiteSpace(item.Title))
+            return null;
+        return Path.GetFullPath(LibraryPaths.SetRoot(settings, item.Category, item.Model, item.Title));
     }
 
     public async Task<DownloadRunResult> RunAsync(
@@ -2148,9 +2275,15 @@ internal sealed class Downloader
                 throw new InvalidOperationException($"发现损坏视频 {invalidVideos.Count} 个，已保留现场并等待重新下载: {names}");
             }
             VideoValidator.ClearInvalidMarker(titleDir);
-            if (settings.DeleteArchiveAfterExtract) DeleteArchives(titleDir);
             CleanSidecars(titleDir);
-            if (!HasMedia(titleDir)) throw new InvalidOperationException("解压后未发现可用图片或视频");
+            var mediaCount = CountMediaFiles(titleDir);
+            if (mediaCount == 0) throw new InvalidOperationException("解压后未发现可用图片或视频");
+            var expectedMedia = ExpectedMediaCount(item.Title);
+            if (expectedMedia > 0 && mediaCount < expectedMedia)
+                log.Report($"压缩包已完整解压，标题数量与包内媒体不同: {item.Title}（包内 {mediaCount}/标题 {expectedMedia}）");
+            if (settings.DeleteArchiveAfterExtract) DeleteArchives(titleDir);
+            MoveSingleFolderUp(titleDir);
+            CleanSidecars(titleDir);
         }
         finally
         {
@@ -2178,10 +2311,10 @@ internal sealed class Downloader
 
     private void RenameArchives(string dir, string title)
     {
-        foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Where(IsArchive))
+        foreach (var f in EnumerateUserFiles(dir).Where(IsArchive))
         {
             if (IsMultiPartArchive(f)) continue;
-            var ext = f.EndsWith(".7z.gz", StringComparison.OrdinalIgnoreCase) ? ".7z.gz" : Path.GetExtension(f);
+            var ext = ArchiveExtension(f);
             var target = Path.Combine(Path.GetDirectoryName(f)!, XiurenClient.Safe(title) + ext);
             if (!f.Equals(target, StringComparison.OrdinalIgnoreCase) && !File.Exists(target)) File.Move(f, target);
         }
@@ -2192,15 +2325,43 @@ internal sealed class Downloader
         if (!Directory.Exists(dir)) return;
         NormalizeUnknownFileExtensions(dir);
         var mediaExts = settings.ImageExts.Concat(settings.VideoExts).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Where(f => !Path.GetDirectoryName(f)!.Equals(dir, StringComparison.OrdinalIgnoreCase) && mediaExts.Contains(Path.GetExtension(f))).ToList())
+        var nestedMedia = EnumerateUserFiles(dir)
+            .Where(f => !Path.GetDirectoryName(f)!.Equals(dir, StringComparison.OrdinalIgnoreCase) &&
+                        mediaExts.Contains(Path.GetExtension(f)))
+            .ToList();
+        var mediaDirectories = nestedMedia
+            .Select(Path.GetDirectoryName)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(2)
+            .Count();
+        if (mediaDirectories > 1)
+        {
+            log.Report("检测到合集分组，保留原始子目录结构: " + Path.GetFileName(dir));
+            return;
+        }
+
+        foreach (var f in nestedMedia)
         {
             var target = Path.Combine(dir, Path.GetFileName(f));
             if (File.Exists(target))
+            {
+                if (FilesMatch(target, f))
+                {
+                    Try(() => File.Delete(f));
+                    continue;
+                }
                 target = Path.Combine(dir, Path.GetFileNameWithoutExtension(f) + "_" + Guid.NewGuid().ToString("N")[..6] + Path.GetExtension(f));
+            }
             Try(() => File.Move(f, target));
         }
 
-        foreach (var child in Directory.GetDirectories(dir, "*", SearchOption.AllDirectories).OrderByDescending(x => x.Length))
+        foreach (var child in Directory.EnumerateDirectories(dir, "*", new EnumerationOptions
+                 {
+                     RecurseSubdirectories = true,
+                     IgnoreInaccessible = true,
+                     ReturnSpecialDirectories = false
+                 }).OrderByDescending(x => x.Length))
             Try(() =>
             {
                 if (!Directory.EnumerateFileSystemEntries(child).Any())
@@ -2208,17 +2369,35 @@ internal sealed class Downloader
             });
     }
 
+    private static bool FilesMatch(string left, string right)
+    {
+        try
+        {
+            var leftInfo = new FileInfo(left);
+            var rightInfo = new FileInfo(right);
+            if (leftInfo.Length != rightInfo.Length) return false;
+            if (leftInfo.Length == 0) return true;
+            using var leftStream = File.OpenRead(left);
+            using var rightStream = File.OpenRead(right);
+            return SHA256.HashData(leftStream).AsSpan().SequenceEqual(SHA256.HashData(rightStream));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private async Task ExtractAsync(string dir, string passwords, CancellationToken ct)
     {
         var processed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        for (var pass = 0; pass < 5; pass++)
+        for (var pass = 0; pass < 12; pass++)
         {
             DeleteZeroByteArchives(dir);
             DeleteInvalidMediaFiles(dir);
-            var archives = Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories)
+            var archives = EnumerateUserFiles(dir)
                 .Where(IsArchiveStart)
                 .Where(f => new FileInfo(f).Length > 0)
-                .Where(f => !processed.Contains(f))
+                .Where(f => !processed.Contains(ArchiveFingerprint(f)))
                 .OrderBy(x => x)
                 .ToList();
             if (archives.Count == 0) break;
@@ -2226,6 +2405,8 @@ internal sealed class Downloader
             var extractedAny = false;
             foreach (var archive in archives)
             {
+                var archiveFingerprint = ArchiveFingerprint(archive);
+                if (processed.Contains(archiveFingerprint)) continue;
                 var file = archive;
                 if (archive.EndsWith(".gz", StringComparison.OrdinalIgnoreCase) && !archive.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase))
                 {
@@ -2256,7 +2437,15 @@ internal sealed class Downloader
                 {
                     DeleteZeroByteArchives(dir);
                     DeleteInvalidMediaFiles(dir);
-                    var args = new List<string> { "x", "-y", "-aoa", "-o.", inputName, "-p" + password };
+                    var probeEntry = await FindArchiveProbeEntryAsync(inputName, dir, password, ct);
+                    if (probeEntry == null) continue;
+                    if (probeEntry.Value.Encrypted)
+                    {
+                        var testArgs = new List<string> { "t", "-y", "-sccUTF-8", inputName, probeEntry.Value.Path, "-p" + password };
+                        if (await Proc(settings.SevenZipPath, testArgs, dir, ct, true, quiet: true) != 0)
+                            continue;
+                    }
+                    var args = new List<string> { "x", "-y", "-aoa", "-sccUTF-8", "-o.", inputName, "-p" + password };
                     if (await Proc(settings.SevenZipPath, args, dir, ct, true) == 0) { ok = true; break; }
                 }
                 if (!ok)
@@ -2265,9 +2454,7 @@ internal sealed class Downloader
                         File.Move(file, archive);
                     throw new InvalidOperationException("解压失败: " + Path.GetFileName(archive));
                 }
-                if (!renamedOuterArchive)
-                    processed.Add(archive);
-                processed.Add(file);
+                processed.Add(archiveFingerprint);
                 extractedAny = true;
             }
 
@@ -2279,6 +2466,31 @@ internal sealed class Downloader
         DeleteInvalidMediaFiles(dir);
     }
 
+    private static string ArchiveFingerprint(string file)
+    {
+        try
+        {
+            const int sampleSize = 64 * 1024;
+            using var stream = File.OpenRead(file);
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            hash.AppendData(BitConverter.GetBytes(stream.Length));
+            var buffer = new byte[Math.Min(sampleSize, (int)Math.Min(stream.Length, sampleSize))];
+            var read = stream.Read(buffer, 0, buffer.Length);
+            if (read > 0) hash.AppendData(buffer, 0, read);
+            if (stream.Length > sampleSize)
+            {
+                stream.Seek(Math.Max(0, stream.Length - sampleSize), SeekOrigin.Begin);
+                read = stream.Read(buffer, 0, buffer.Length);
+                if (read > 0) hash.AppendData(buffer, 0, read);
+            }
+            return Convert.ToHexString(hash.GetHashAndReset());
+        }
+        catch
+        {
+            return Path.GetFullPath(file);
+        }
+    }
+
     private static string BuildOuterArchivePath(string file)
     {
         var directory = Path.GetDirectoryName(file)!;
@@ -2288,6 +2500,69 @@ internal sealed class Downloader
         for (var suffix = 2; File.Exists(candidate); suffix++)
             candidate = Path.Combine(directory, stem + $".outer-{suffix}" + extension);
         return candidate;
+    }
+
+    private async Task<(string Path, bool Encrypted)?> FindArchiveProbeEntryAsync(
+        string inputName,
+        string directory,
+        string password,
+        CancellationToken ct)
+    {
+        var lines = new ConcurrentQueue<string>();
+        var code = await Proc(
+            settings.SevenZipPath,
+            ["l", "-slt", "-sccUTF-8", inputName, "-p" + password],
+            directory,
+            ct,
+            allowFail: true,
+            captureLine: lines.Enqueue,
+            quiet: true);
+        if (code != 0) return null;
+
+        var entries = new List<(string Path, long Size, bool Encrypted)>();
+        string? path = null;
+        long? size = null;
+        var directoryEntry = false;
+        var encrypted = false;
+
+        void Commit()
+        {
+            if (!string.IsNullOrWhiteSpace(path) && size is > 0 && !directoryEntry &&
+                !path.Equals(inputName, StringComparison.OrdinalIgnoreCase) &&
+                !Path.GetFileName(path).Equals(Path.GetFileName(inputName), StringComparison.OrdinalIgnoreCase))
+                entries.Add((path, size.Value, encrypted));
+            path = null;
+            size = null;
+            directoryEntry = false;
+            encrypted = false;
+        }
+
+        foreach (var line in lines.Append(""))
+        {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                Commit();
+                continue;
+            }
+            if (line.StartsWith("Path = ", StringComparison.Ordinal))
+                path = line[7..].Trim();
+            else if (line.StartsWith("Size = ", StringComparison.Ordinal) &&
+                     long.TryParse(line[7..].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+                size = parsed;
+            else if (line.StartsWith("Folder = +", StringComparison.Ordinal) ||
+                     line.StartsWith("Attributes = D", StringComparison.Ordinal))
+                directoryEntry = true;
+            else if (line.StartsWith("Encrypted = +", StringComparison.Ordinal))
+                encrypted = true;
+        }
+
+        var selected = entries
+            .OrderByDescending(x => x.Encrypted)
+            .ThenBy(x => x.Size)
+            .FirstOrDefault();
+        return string.IsNullOrWhiteSpace(selected.Path)
+            ? null
+            : (selected.Path, selected.Encrypted);
     }
 
     private IEnumerable<string> Passwords(string value, string directory)
@@ -2365,10 +2640,10 @@ internal sealed class Downloader
             Try(() => File.Delete(f));
     }
 
-    private static void ClearReadOnlyAttributes(string dir)
+    private void ClearReadOnlyAttributes(string dir)
     {
         if (!Directory.Exists(dir)) return;
-        foreach (var file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+        foreach (var file in EnumerateUserFiles(dir))
         {
             try
             {
@@ -2464,7 +2739,14 @@ internal sealed class Downloader
     private IEnumerable<string> EnumerateUserFiles(string root)
     {
         if (!Directory.Exists(root) || AppPaths.IsInsideTool(root)) return [];
-        return Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).Where(f => !AppPaths.IsInsideTool(f)).ToList();
+        return Directory.EnumerateFiles(root, "*", new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                IgnoreInaccessible = true,
+                ReturnSpecialDirectories = false
+            })
+            .Where(f => !AppPaths.IsInsideTool(f))
+            .ToList();
     }
 
     private bool IsArchive(string f)
@@ -2474,14 +2756,31 @@ internal sealed class Downloader
             return false;
         var name = Path.GetFileName(f);
         if (string.IsNullOrWhiteSpace(Path.GetExtension(f)))
-            return GuessExtension(f) is ".zip" or ".rar" or ".7z" or ".gz" or ".wim" or ".iso";
+            return IsArchiveExtension(GuessExtension(f));
         if (name.EndsWith(".7z.gz", StringComparison.OrdinalIgnoreCase)) return true;
         if (Regex.IsMatch(name, @"\.(?:7z|zip|rar)\.\d{3}$", RegexOptions.IgnoreCase)) return true;
         if (Regex.IsMatch(name, @"\.part\d+\.rar$", RegexOptions.IgnoreCase)) return true;
         if (Regex.IsMatch(name, @"\.r\d{2}$", RegexOptions.IgnoreCase)) return true;
         if (settings.ArchiveExts.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase)) return true;
-        return GuessExtension(f) is ".zip" or ".rar" or ".7z" or ".gz" or ".wim" or ".iso";
+        return IsArchiveExtension(GuessExtension(f));
     }
+
+    private string ArchiveExtension(string file)
+    {
+        var name = Path.GetFileName(file);
+        foreach (var compound in new[] { ".tar.gz", ".tar.bz2", ".tar.xz", ".7z.gz" })
+            if (name.EndsWith(compound, StringComparison.OrdinalIgnoreCase))
+                return compound;
+
+        var guessed = GuessExtension(file);
+        if (IsArchiveExtension(guessed)) return guessed;
+        var extension = Path.GetExtension(file);
+        return string.IsNullOrWhiteSpace(extension) ? ".archive" : extension;
+    }
+
+    private static bool IsArchiveExtension(string extension) =>
+        extension is ".zip" or ".rar" or ".7z" or ".gz" or ".tar" or ".wim" or
+            ".xz" or ".bz2" or ".zst" or ".cab";
 
     private bool IsArchiveStart(string f)
     {
@@ -2551,6 +2850,31 @@ internal sealed class Downloader
             !File.Exists(f + ".BaiduPCS-Go-downloading") &&
             IsMediaFile(f));
     private bool HasArchives(string dir) => Directory.Exists(dir) && EnumerateUserFiles(dir).Any(IsArchive);
+
+    private int CountMediaFiles(string dir) =>
+        Directory.Exists(dir) ? EnumerateUserFiles(dir).Count(IsMediaFile) : 0;
+
+    private static int ExpectedMediaCount(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return 0;
+        var images = 0;
+        var plusImages = Regex.Match(title, @"(\d+)\s*\+\s*(\d+)\s*P", RegexOptions.IgnoreCase);
+        if (plusImages.Success)
+            images = int.Parse(plusImages.Groups[1].Value, CultureInfo.InvariantCulture) +
+                     int.Parse(plusImages.Groups[2].Value, CultureInfo.InvariantCulture);
+        else
+        {
+            var imageMatch = Regex.Match(title, @"(\d+)\s*P", RegexOptions.IgnoreCase);
+            if (imageMatch.Success)
+                images = int.Parse(imageMatch.Groups[1].Value, CultureInfo.InvariantCulture);
+        }
+
+        var videos = 0;
+        var videoMatch = Regex.Match(title, @"(\d+)\s*V", RegexOptions.IgnoreCase);
+        if (videoMatch.Success)
+            videos = int.Parse(videoMatch.Groups[1].Value, CultureInfo.InvariantCulture);
+        return images + videos;
+    }
 
     private string RemoteItemDir(ResourceItem item, string workTitle)
     {
@@ -2627,7 +2951,7 @@ internal sealed class Downloader
         try
         {
             using var stream = File.OpenRead(f);
-            var length = (int)Math.Min(stream.Length, 64);
+            var length = (int)Math.Min(stream.Length, 512);
             if (length < 4) return "";
             var buffer = new byte[length];
             var read = stream.Read(buffer, 0, length);
@@ -2635,7 +2959,12 @@ internal sealed class Downloader
             if (read >= 4 && buffer[0] == (byte)'P' && buffer[1] == (byte)'K') return ".zip";
             if (read >= 7 && buffer[0] == (byte)'R' && buffer[1] == (byte)'a' && buffer[2] == (byte)'r' && buffer[3] == (byte)'!') return ".rar";
             if (read >= 2 && buffer[0] == 0x1F && buffer[1] == 0x8B) return ".gz";
+            if (read >= 6 && buffer[0] == 0xFD && buffer[1] == 0x37 && buffer[2] == 0x7A && buffer[3] == 0x58 && buffer[4] == 0x5A && buffer[5] == 0x00) return ".xz";
+            if (read >= 3 && buffer[0] == (byte)'B' && buffer[1] == (byte)'Z' && buffer[2] == (byte)'h') return ".bz2";
+            if (read >= 4 && buffer[0] == 0x28 && buffer[1] == 0xB5 && buffer[2] == 0x2F && buffer[3] == 0xFD) return ".zst";
+            if (read >= 4 && buffer[0] == (byte)'M' && buffer[1] == (byte)'S' && buffer[2] == (byte)'C' && buffer[3] == (byte)'F') return ".cab";
             if (read >= 5 && buffer[0] == (byte)'M' && buffer[1] == (byte)'S' && buffer[2] == (byte)'W' && buffer[3] == (byte)'I' && buffer[4] == (byte)'M') return ".wim";
+            if (read >= 265 && Encoding.ASCII.GetString(buffer, 257, 5).Equals("ustar", StringComparison.Ordinal)) return ".tar";
             if (read >= 12 && Encoding.ASCII.GetString(buffer, 4, Math.Min(8, read - 4)).Contains("ftyp", StringComparison.Ordinal)) return ".mp4";
             if (read >= 3 && buffer[0] == 0xFF && buffer[1] == 0xD8 && buffer[2] == 0xFF) return ".jpg";
             if (read >= 8 && buffer[0] == 0x89 && buffer[1] == (byte)'P' && buffer[2] == (byte)'N' && buffer[3] == (byte)'G') return ".png";
@@ -2825,7 +3154,8 @@ internal sealed class Downloader
         string? configDir = null,
         bool watchLowSpeed = false,
         Action<string>? captureTransferError = null,
-        Action<string>? captureLine = null)
+        Action<string>? captureLine = null,
+        bool quiet = false)
     {
         var psi = new ProcessStartInfo(exe)
         {
@@ -2849,12 +3179,14 @@ internal sealed class Downloader
         process.OutputDataReceived += (_, e) =>
         {
             if (e.Data != null) captureLine?.Invoke(e.Data);
-            ReportProcessLine(e.Data, ref baiduTransferError, ref repeatedArchivePasswordErrors, ref repeatedArchiveSummaryErrors, speedWatch);
+            if (!quiet)
+                ReportProcessLine(e.Data, ref baiduTransferError, ref repeatedArchivePasswordErrors, ref repeatedArchiveSummaryErrors, speedWatch);
         };
         process.ErrorDataReceived += (_, e) =>
         {
             if (e.Data != null) captureLine?.Invoke(e.Data);
-            ReportProcessLine(e.Data, ref baiduTransferError, ref repeatedArchivePasswordErrors, ref repeatedArchiveSummaryErrors, speedWatch);
+            if (!quiet)
+                ReportProcessLine(e.Data, ref baiduTransferError, ref repeatedArchivePasswordErrors, ref repeatedArchiveSummaryErrors, speedWatch);
         };
         process.Start();
         process.StandardInput.Close();
@@ -2912,8 +3244,10 @@ internal sealed class Downloader
         DownloadSpeedWatch? speedWatch)
     {
         if (string.IsNullOrWhiteSpace(line)) return;
-        if (line.Contains("Data Error in encrypted file", StringComparison.OrdinalIgnoreCase) &&
-            line.Contains("Wrong password", StringComparison.OrdinalIgnoreCase))
+        if (line.Contains("Wrong password", StringComparison.OrdinalIgnoreCase) &&
+            (line.Contains("Data Error in encrypted file", StringComparison.OrdinalIgnoreCase) ||
+             line.Contains("CRC Failed in encrypted file", StringComparison.OrdinalIgnoreCase) ||
+             line.TrimStart().StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase)))
         {
             Interlocked.Increment(ref repeatedArchivePasswordErrors);
             return;
