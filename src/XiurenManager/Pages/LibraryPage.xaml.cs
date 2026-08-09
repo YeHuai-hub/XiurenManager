@@ -122,8 +122,18 @@ public partial class LibraryPage : Page
     private void LoadLibrary()
     {
         ConstrainBodyToViewport();
-        var selected = (ModelList.SelectedItem as ModelLibraryRow)?.Key;
-        var selectedCategory = CategoryFilter.SelectedItem as string ?? "全部分类";
+        var navigationTarget = state.ConsumeLibraryNavigation();
+        var selected = navigationTarget == null
+            ? (ModelList.SelectedItem as ModelLibraryRow)?.Key
+            : navigationTarget.Category + "|" + navigationTarget.Model;
+        var selectedCategory = navigationTarget?.Category ??
+                               CategoryFilter.SelectedItem as string ??
+                               "全部分类";
+        if (navigationTarget != null)
+        {
+            SetFilter.Text = "";
+            FavoriteOnly.IsChecked = false;
+        }
         categoryFilterLoading = true;
         var categoryItems = state.Database.LocalFiles
             .Select(x => x.Category)
@@ -188,6 +198,14 @@ public partial class LibraryPage : Page
         var index = models.ToList().FindIndex(x =>
             x.Key.Equals(selected, StringComparison.OrdinalIgnoreCase));
         ModelList.SelectedIndex = index >= 0 ? index : 0;
+        if (index >= 0)
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                ModelList.UpdateLayout();
+                ModelList.ScrollIntoView(ModelList.SelectedItem);
+            });
+        }
     }
 
     private void ConstrainBodyToViewport()

@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Threading;
 using Wpf.Ui.Controls;
+using XiurenDownloader;
 using XiurenManager.Pages;
 
 namespace XiurenManager;
@@ -12,6 +13,12 @@ public partial class MainWindow : FluentWindow
         InitializeComponent();
         Loaded += OnLoaded;
         Closed += (_, _) => App.State.Storage.Dispose();
+    }
+
+    internal void NavigateToLibrary(LocalStat item)
+    {
+        App.State.RequestLibraryNavigation(item);
+        RootNavigation.Navigate(typeof(LibraryPage));
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)

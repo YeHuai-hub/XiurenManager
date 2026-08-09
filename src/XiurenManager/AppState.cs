@@ -6,6 +6,10 @@ using XiurenDownloader;
 
 namespace XiurenManager;
 
+internal sealed record LibraryNavigationTarget(
+    string Category,
+    string Model);
+
 internal sealed class AppState
 {
     public Settings Settings { get; } = Settings.Load();
@@ -16,6 +20,7 @@ internal sealed class AppState
     public StorageMigrationService Storage { get; }
     private readonly Channel<string> persistentLog = Channel.CreateUnbounded<string>(
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
+    private LibraryNavigationTarget? pendingLibraryNavigation;
 
     public event EventHandler? DataChanged;
     public event EventHandler? JobsChanged;
@@ -36,6 +41,20 @@ internal sealed class AppState
     public void NotifyJobsChanged()
     {
         RaiseOnUi(() => JobsChanged?.Invoke(this, EventArgs.Empty));
+    }
+
+    public void RequestLibraryNavigation(LocalStat item)
+    {
+        pendingLibraryNavigation = new LibraryNavigationTarget(
+            item.Category,
+            item.Model);
+    }
+
+    public LibraryNavigationTarget? ConsumeLibraryNavigation()
+    {
+        var target = pendingLibraryNavigation;
+        pendingLibraryNavigation = null;
+        return target;
     }
 
     private static void RaiseOnUi(Action callback)

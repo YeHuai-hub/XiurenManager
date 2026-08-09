@@ -135,6 +135,7 @@ public partial class RecommendationPage : Page
         CoverMessage.Text = "正在载入封面";
         ShuffleButton.IsEnabled = true;
         WatchButton.IsEnabled = true;
+        OpenInLibraryButton.IsEnabled = true;
         OpenFolderButton.IsEnabled = true;
 
         ModelText.Text = $"{item.Category} · {item.Model}";
@@ -212,6 +213,7 @@ public partial class RecommendationPage : Page
         RecommendationSummary.Text = "完成本地扫描后，这里会随机推荐写真";
         ShuffleButton.IsEnabled = false;
         WatchButton.IsEnabled = false;
+        OpenInLibraryButton.IsEnabled = false;
         OpenFolderButton.IsEnabled = false;
     }
 
@@ -245,6 +247,13 @@ public partial class RecommendationPage : Page
         var start = new ProcessStartInfo("explorer.exe") { UseShellExecute = true };
         start.ArgumentList.Add(recommendation.LocalDir);
         Process.Start(start);
+    }
+
+    private void OpenInLibrary_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (recommendation == null) return;
+        if (Window.GetWindow(this) is MainWindow window)
+            window.NavigateToLibrary(recommendation);
     }
 
     private async void PreviewStrip_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
