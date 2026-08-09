@@ -117,7 +117,8 @@ internal static class Headless
             var settings = Settings.Load();
             var db = Database.Load();
             var model = GetArgValue(args, "--model");
-            var changed = RepairMissingCompletedResources(settings, db, model);
+            var postId = GetArgValue(args, "--post-id");
+            var changed = RepairMissingCompletedResources(settings, db, model, postId);
             if (changed > 0) WriteLog("已把本地缺失/损坏的已完成记录改回待下载: " + changed + " 条");
 
             var items = db.Resources
@@ -125,6 +126,7 @@ internal static class Headless
                 .Where(x => !string.IsNullOrWhiteSpace(x.PanUrl))
                 .Where(x => !x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase))
                 .Where(x => string.IsNullOrWhiteSpace(model) || x.Model.Equals(XiurenClient.Safe(model), StringComparison.OrdinalIgnoreCase))
+                .Where(x => string.IsNullOrWhiteSpace(postId) || x.PostId.Equals(postId.Trim(), StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
             WriteLog(string.IsNullOrWhiteSpace(model)
@@ -153,12 +155,17 @@ internal static class Headless
     private static int ParsePositiveInt(string value, int fallback) =>
         int.TryParse(value, out var parsed) && parsed > 0 ? parsed : fallback;
 
-    private static int RepairMissingCompletedResources(Settings settings, Database db, string modelFilter)
+    private static int RepairMissingCompletedResources(
+        Settings settings,
+        Database db,
+        string modelFilter,
+        string postIdFilter = "")
     {
         var model = XiurenClient.Safe((modelFilter ?? "").Trim());
         var changed = 0;
         foreach (var r in db.Resources.Where(x =>
                      x.DownloadStatus.Equals("Downloaded", StringComparison.OrdinalIgnoreCase) &&
+                     (string.IsNullOrWhiteSpace(postIdFilter) || x.PostId.Equals(postIdFilter.Trim(), StringComparison.OrdinalIgnoreCase)) &&
                      (string.IsNullOrWhiteSpace(model) || x.Model.Equals(model, StringComparison.OrdinalIgnoreCase))))
         {
             if (HasUsableLocalMedia(settings, r)) continue;
@@ -2429,7 +2436,7 @@ internal sealed class Downloader
         if (!Directory.Exists(dir)) return;
         Try(() =>
         {
-            if (!Directory.EnumerateFileSystemEntries(dir, "*", SearchOption.AllDirectories).Any())
+            if (!Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Any())
                 Directory.Delete(dir, true);
         });
     }
@@ -2472,7 +2479,8 @@ internal sealed class Downloader
         if (Regex.IsMatch(name, @"\.(?:7z|zip|rar)\.\d{3}$", RegexOptions.IgnoreCase)) return true;
         if (Regex.IsMatch(name, @"\.part\d+\.rar$", RegexOptions.IgnoreCase)) return true;
         if (Regex.IsMatch(name, @"\.r\d{2}$", RegexOptions.IgnoreCase)) return true;
-        return settings.ArchiveExts.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase);
+        if (settings.ArchiveExts.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase)) return true;
+        return GuessExtension(f) is ".zip" or ".rar" or ".7z" or ".gz" or ".wim" or ".iso";
     }
 
     private bool IsArchiveStart(string f)
