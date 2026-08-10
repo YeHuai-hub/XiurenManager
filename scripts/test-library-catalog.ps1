@@ -97,7 +97,21 @@ $ledger = Get-Content -LiteralPath $ledgerPath -Raw -Encoding UTF8 | ConvertFrom
 $present = @($ledger.Items | Where-Object Title -eq "SetPresent")[0]
 $missing = @($ledger.Items | Where-Object Title -eq "SetMissing")[0]
 $manifestPath = Join-Path $dataRoot ("data\manifests\" + $present.SetId.Substring(0, 2) + "\" + $present.SetId + ".json")
+$coverPath = Join-Path $dataRoot ("cache\covers\" + $present.SetId + ".jpg")
 $ids = @($ledger.Items | ForEach-Object SetId)
+
+Remove-Item -LiteralPath $coverPath -Force -ErrorAction SilentlyContinue
+$env:XIUREN_DATA_ROOT = $dataRoot
+try {
+    $warmCover = Start-Process -FilePath $Executable -ArgumentList @("--warm-cover", $presentSet) -Wait -PassThru
+    $warmViewer = Start-Process -FilePath $Executable -ArgumentList @(
+        "--warm-viewer-image",
+        (Join-Path $presentSet "cover.jpg")
+    ) -Wait -PassThru
+}
+finally {
+    $env:XIUREN_DATA_ROOT = $oldDataRoot
+}
 
 Remove-Item -LiteralPath (Join-Path $presentSet "second.jpg") -Force
 $env:XIUREN_DATA_ROOT = $dataRoot
@@ -141,11 +155,17 @@ $result = [ordered]@{
     SecondExitCode = $second.ExitCode
     ThirdExitCode = $third.ExitCode
     FourthExitCode = $fourth.ExitCode
+    WarmCoverExitCode = $warmCover.ExitCode
+    WarmViewerExitCode = $warmViewer.ExitCode
     ItemCountPreserved = @($ledger.Items).Count -eq 2 -and @($ledgerAfterDelete.Items).Count -eq 2
     UniqueStableIds = $ids.Count -eq (@($ids | Sort-Object -Unique)).Count -and
         ![string]::IsNullOrWhiteSpace([string]$present.SetId)
     PresentWasIndexed = [string]$present.Availability -eq "Available" -and
         (Test-Path -LiteralPath $manifestPath)
+    VisibleCoverCreatedOnDemand = $warmCover.ExitCode -eq 0 -and
+        (Test-Path -LiteralPath $coverPath) -and
+        (Get-Item -LiteralPath $coverPath).Length -gt 0
+    ViewerImageCacheReused = $warmViewer.ExitCode -eq 0
     MissingHistoryPreserved = [string]$missing.Availability -eq "Missing" -and
         [int]$missing.ImageCount -eq 12 -and [int]$missing.VideoCount -eq 1
     SourceMetadataPreserved = [string]$present.SourcePostId -eq "1001" -and
@@ -163,10 +183,19 @@ $result = [ordered]@{
     TestRoot = $base
 }
 $failed = @($result.GetEnumerator() | Where-Object {
-    $_.Key -notin @("FirstExitCode", "SecondExitCode", "ThirdExitCode", "FourthExitCode", "TestRoot") -and !$_.Value
+    $_.Key -notin @(
+        "FirstExitCode",
+        "SecondExitCode",
+        "ThirdExitCode",
+        "FourthExitCode",
+        "WarmCoverExitCode",
+        "WarmViewerExitCode",
+        "TestRoot"
+    ) -and !$_.Value
 })
 if ($first.ExitCode -ne 0 -or $second.ExitCode -ne 0 -or $third.ExitCode -ne 0 -or
-    $fourth.ExitCode -ne 0 -or $failed.Count -gt 0) {
+    $fourth.ExitCode -ne 0 -or $warmCover.ExitCode -ne 0 -or
+    $warmViewer.ExitCode -ne 0 -or $failed.Count -gt 0) {
     $result | ConvertTo-Json
     throw "Library catalog integration test failed."
 }

@@ -42,6 +42,72 @@ public partial class App : Application
             return;
         }
 
+        var warmCoverIndex = Array.FindIndex(e.Args, arg =>
+            arg.Equals("--warm-cover", StringComparison.OrdinalIgnoreCase));
+        if (warmCoverIndex >= 0 && warmCoverIndex + 1 < e.Args.Length)
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            var requestedPath = Path.GetFullPath(e.Args[warmCoverIndex + 1]);
+            var requestedSet = State.Catalog.Snapshot().FirstOrDefault(item =>
+                Path.GetFullPath(item.LocalDir)
+                    .Equals(requestedPath, StringComparison.OrdinalIgnoreCase));
+            if (requestedSet == null)
+            {
+                Shutdown(2);
+                return;
+            }
+
+            try
+            {
+                var media = await State.Catalog.LoadMediaAsync(
+                    requestedSet,
+                    CancellationToken.None);
+                var cover = await State.Catalog.EnsureCoverAsync(
+                    requestedSet,
+                    media,
+                    CancellationToken.None);
+                Shutdown(cover == null ? 2 : 0);
+            }
+            catch (Exception ex)
+            {
+                State.WriteLog("按需封面诊断失败: " + ex);
+                Shutdown(2);
+            }
+            return;
+        }
+
+        var warmViewerImageIndex = Array.FindIndex(e.Args, arg =>
+            arg.Equals("--warm-viewer-image", StringComparison.OrdinalIgnoreCase));
+        if (warmViewerImageIndex >= 0 && warmViewerImageIndex + 1 < e.Args.Length)
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            try
+            {
+                var path = Path.GetFullPath(e.Args[warmViewerImageIndex + 1]);
+                var preview = await MediaCoverService.LoadViewerPreviewAsync(
+                    path,
+                    State.Settings,
+                    CancellationToken.None);
+                var first = await MediaCoverService.LoadViewerImageAsync(
+                    path,
+                    State.Settings,
+                    CancellationToken.None);
+                var second = await MediaCoverService.LoadViewerImageAsync(
+                    path,
+                    State.Settings,
+                    CancellationToken.None);
+                Shutdown(!ReferenceEquals(preview, first) &&
+                         ReferenceEquals(first, second)
+                    ? 0
+                    : 2);
+            }
+            catch
+            {
+                Shutdown(2);
+            }
+            return;
+        }
+
         var viewSetIndex = Array.FindIndex(e.Args, arg =>
             arg.Equals("--view-set", StringComparison.OrdinalIgnoreCase));
         if (viewSetIndex >= 0 && viewSetIndex + 1 < e.Args.Length)
@@ -115,7 +181,9 @@ public partial class App : Application
         }
 
         State.Queue.RecoverInterruptedJobs();
-        var window = new MainWindow();
+        var resumeQueue = e.Args.Any(arg =>
+            arg.Equals("--resume-queue", StringComparison.OrdinalIgnoreCase));
+        var window = new MainWindow(resumeQueue);
         MainWindow = window;
         window.Show();
     }

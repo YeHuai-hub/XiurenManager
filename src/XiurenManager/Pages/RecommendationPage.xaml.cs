@@ -100,30 +100,23 @@ public partial class RecommendationPage : Page
                 .ToList();
         }
 
-        LocalStat? selected = null;
         while (candidates.Count > 0)
         {
             var index = Random.Shared.Next(candidates.Count);
             var candidate = candidates[index];
             candidates[index] = candidates[^1];
             candidates.RemoveAt(candidates.Count - 1);
-            if (HasUsableMedia(candidate))
-            {
-                selected = candidate;
-                break;
-            }
+            if (!HasUsableMedia(candidate)) continue;
+            recommendation = candidate;
+            ShowRecommendation(candidate);
+            if (await LoadRecommendationVisualsAsync(candidate))
+                return;
+            if (recommendation == null || !SameSet(candidate, recommendation))
+                return;
         }
 
-        if (selected == null)
-        {
-            recommendation = null;
-            ShowEmpty();
-            return;
-        }
-
-        recommendation = selected;
-        ShowRecommendation(recommendation);
-        await LoadRecommendationVisualsAsync(recommendation);
+        recommendation = null;
+        ShowEmpty();
     }
 
     private void ShowRecommendation(LocalStat item)
@@ -151,7 +144,7 @@ public partial class RecommendationPage : Page
             $"从 {state.Database.LocalFiles.Count(IsEligible):N0} 套本地写真中随机挑选";
     }
 
-    private async Task LoadRecommendationVisualsAsync(LocalStat item)
+    private async Task<bool> LoadRecommendationVisualsAsync(LocalStat item)
     {
         coverCts.Cancel();
         coverCts.Dispose();
@@ -159,17 +152,28 @@ public partial class RecommendationPage : Page
         var token = coverCts.Token;
         try
         {
-            var cover = await MediaCoverService.LoadCoverAsync(
+            var media = await state.Catalog.LoadMediaAsync(item, token);
+            var persistentCover = await state.Catalog.EnsureCoverAsync(
                 item,
-                state.Settings,
+                media,
                 token,
-                1200);
+                440);
+            var cover = media.Count == 0
+                ? persistentCover
+                : await MediaCoverService.LoadMediaPreviewAsync(
+                    media[0].Path,
+                    state.Settings,
+                    token,
+                    1200) ?? persistentCover;
             if (token.IsCancellationRequested ||
                 recommendation == null ||
                 !SameSet(item, recommendation))
             {
-                return;
+                return false;
             }
+
+            if (cover == null || media.Count == 0)
+                return false;
 
             SetStageImage(cover);
             CoverPlaceholder.Visibility = cover == null
@@ -178,25 +182,25 @@ public partial class RecommendationPage : Page
             CoverProgress.Visibility = Visibility.Collapsed;
             CoverMessage.Text = cover == null ? "这套写真没有可用封面" : "";
 
-            var paths = await MediaCoverService.FindPreviewMediaAsync(
-                item,
-                state.Settings,
-                int.MaxValue,
-                token);
-            foreach (var path in paths)
-                previews.Add(new RecommendationPreviewRow { Path = path });
+            foreach (var file in media)
+                previews.Add(new RecommendationPreviewRow { Path = file.Path });
             suppressPreviewSelection = true;
             PreviewStrip.SelectedIndex = previews.Count > 0 ? 0 : -1;
             suppressPreviewSelection = false;
             _ = LoadAllPreviewThumbnailsAsync(previews.ToArray(), token);
+            return true;
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
         catch (Exception ex)
         {
-            if (token.IsCancellationRequested) return;
+            if (token.IsCancellationRequested) return false;
             CoverProgress.Visibility = Visibility.Collapsed;
-            CoverMessage.Text = "封面载入失败";
+            CoverMessage.Text = "当前套图不可用，正在换一套";
             state.WriteLog($"推荐封面载入失败: {item.Title} | {ex.Message}");
+            return false;
         }
     }
 

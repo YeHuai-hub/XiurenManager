@@ -107,8 +107,20 @@ public partial class ToolsPage : Page
             MessageBox.Show("下载队列或存储迁移正在运行，请先停止或等待完成。");
             return;
         }
-        await Task.Run(() => LocalScanner.ScanExclusive(state));
-        MessageBox.Show("本地资源扫描完成。");
+        try
+        {
+            await LocalScanner.ScanExclusiveAsync(state);
+            MessageBox.Show("本地资源扫描完成。");
+        }
+        catch (Exception ex)
+        {
+            state.WriteLog("资源账本扫描失败: " + ex.Message);
+            MessageBox.Show(
+                ErrorText.Format(ex),
+                "扫描失败",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
     }
 
     private async void Clean_OnClick(object sender, RoutedEventArgs e)

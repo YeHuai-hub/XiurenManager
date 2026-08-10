@@ -32,6 +32,7 @@ internal sealed class SetCardRow : INotifyPropertyChanged
     public string TagsLabel { get; init; } = "";
     public bool IsCoverLoading { get; set; }
     public bool CoverAttempted { get; set; }
+    public CancellationTokenSource? CoverLoadCts { get; set; }
     public string Title => Item.Title;
     public string MediaLabel => Item.VideoCount + Item.InvalidVideoCount > 0
         ? $"{Item.ImageCount} 图  {Item.VideoCount + Item.InvalidVideoCount} 视"
@@ -112,6 +113,7 @@ public partial class LibraryPage : Page
     private int displayedCardCount;
     private int cardColumns;
     private CancellationTokenSource coverCts = new();
+    private readonly SemaphoreSlim visibleCoverGate = new(2, 2);
     private bool fileOperationRunning;
     private bool categoryFilterLoading;
     private int filterVersion;
@@ -412,27 +414,74 @@ public partial class LibraryPage : Page
             return;
         }
 
-        var token = coverCts.Token;
+        var cancellation = CancellationTokenSource.CreateLinkedTokenSource(coverCts.Token);
+        card.CoverLoadCts = cancellation;
+        var token = cancellation.Token;
         card.IsCoverLoading = true;
         try
         {
-            card.Cover = await state.Catalog.LoadCoverAsync(
+            var cover = await state.Catalog.LoadCoverAsync(
                 card.Item,
                 token);
+            token.ThrowIfCancellationRequested();
+            if (cover == null &&
+                CatalogStatuses.CanAttemptOpen(card.Item.Availability))
+            {
+                card.Placeholder = "正在生成封面";
+                await visibleCoverGate.WaitAsync(token);
+                try
+                {
+                    cover = await state.Catalog.LoadCoverAsync(card.Item, token);
+                    if (cover == null)
+                    {
+                        var media = await state.Catalog.LoadMediaAsync(card.Item, token);
+                        cover = await state.Catalog.EnsureCoverAsync(
+                            card.Item,
+                            media,
+                            token,
+                            decodeWidth: 440);
+                    }
+                }
+                finally
+                {
+                    visibleCoverGate.Release();
+                }
+            }
+            token.ThrowIfCancellationRequested();
+            card.Cover = cover;
             card.CoverAttempted = true;
             if (card.Cover == null)
-                card.Placeholder = "暂无本地封面";
+                card.Placeholder = "没有可用封面";
         }
         catch (OperationCanceledException) { }
         catch
         {
-            card.CoverAttempted = true;
-            card.Placeholder = "封面加载失败";
+            if (!token.IsCancellationRequested)
+            {
+                card.CoverAttempted = true;
+                card.Placeholder = "封面加载失败";
+            }
         }
         finally
         {
-            card.IsCoverLoading = false;
+            if (ReferenceEquals(card.CoverLoadCts, cancellation))
+            {
+                card.CoverLoadCts = null;
+                card.IsCoverLoading = false;
+            }
+            cancellation.Dispose();
         }
+    }
+
+    private void SetCard_OnUnloaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: SetCardRow card }) return;
+        var cancellation = card.CoverLoadCts;
+        card.CoverLoadCts = null;
+        cancellation?.Cancel();
+        card.IsCoverLoading = false;
+        card.CoverAttempted = false;
+        card.Cover = null;
     }
 
     private void State_OnDataChanged(object? sender, EventArgs e)
@@ -880,8 +929,13 @@ public partial class LibraryPage : Page
             button.IsEnabled = false;
         try
         {
-            await Task.Run(() => LocalScanner.ScanExclusive(state));
+            await LocalScanner.ScanExclusiveAsync(state);
             LoadLibrary();
+        }
+        catch (Exception ex)
+        {
+            state.WriteLog("媒体库扫描失败: " + ex.Message);
+            await ShowInfoAsync("扫描失败", ErrorText.Format(ex));
         }
         finally
         {

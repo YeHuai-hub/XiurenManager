@@ -8,8 +8,11 @@ namespace XiurenManager;
 
 public partial class MainWindow : FluentWindow
 {
-    public MainWindow()
+    private readonly bool resumeQueueAfterMaintenance;
+
+    public MainWindow(bool resumeQueueAfterMaintenance = false)
     {
+        this.resumeQueueAfterMaintenance = resumeQueueAfterMaintenance;
         InitializeComponent();
         Loaded += OnLoaded;
     }
@@ -25,6 +28,8 @@ public partial class MainWindow : FluentWindow
         RootNavigation.Navigate(typeof(RecommendationPage));
         try
         {
+            using var operationLease = await ResourceOperationLock.AcquireAsync(
+                CancellationToken.None);
             await Task.Run(() =>
             {
                 ModelCategoryUnifier.ReconcileSplitModels(App.State, notify: false);
@@ -43,6 +48,17 @@ public partial class MainWindow : FluentWindow
         }
         finally
         {
+            if (resumeQueueAfterMaintenance)
+            {
+                try
+                {
+                    await App.State.Queue.ContinueAsync();
+                }
+                catch (Exception ex)
+                {
+                    App.State.WriteLog("启动后继续下载失败: " + ex.Message);
+                }
+            }
             App.State.Storage.Start();
             App.State.Catalog.StartBackgroundCoverBackfill();
             _ = App.State.Metadata.QueueStartupBackfillAsync();

@@ -68,6 +68,7 @@ internal sealed class LibraryCatalogService : IDisposable
     private readonly CancellationTokenSource stopping = new();
     private readonly Task coverWorker;
     private Task? coverBackfillWorker;
+    private int urgentCoverRequests;
     private List<LocalStat> entries;
     private SourceMetadataIndex sourceMetadataIndex = BuildSourceMetadataIndex([]);
     private string lastLedgerFingerprint = "";
@@ -283,6 +284,36 @@ internal sealed class LibraryCatalogService : IDisposable
             decodeWidth);
     }
 
+    public async Task<System.Windows.Media.ImageSource?> EnsureCoverAsync(
+        LocalStat item,
+        IReadOnlyList<CatalogMediaFile> media,
+        CancellationToken token,
+        int decodeWidth = 1200)
+    {
+        var cached = await LoadCoverAsync(item, token, decodeWidth).ConfigureAwait(false);
+        if (cached != null) return cached;
+        var source = media.FirstOrDefault()?.Path;
+        if (string.IsNullOrWhiteSpace(source)) return null;
+
+        Interlocked.Increment(ref urgentCoverRequests);
+        try
+        {
+            using var operationLease = await ResourceOperationLock.AcquireAsync(token)
+                .ConfigureAwait(false);
+            await MediaCoverService.CreatePersistentCoverAsync(
+                source,
+                CoverPath(item.SetId),
+                state.Settings,
+                token,
+                decodeWidth).ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref urgentCoverRequests);
+        }
+        return await LoadCoverAsync(item, token, decodeWidth).ConfigureAwait(false);
+    }
+
     public void MarkUnavailable(LocalStat item, string status, string reason)
     {
         lock (gate)
@@ -489,17 +520,19 @@ internal sealed class LibraryCatalogService : IDisposable
                     {
                         while (state.Queue.IsRunning || state.Storage.IsRunning)
                             await Task.Delay(500, stopping.Token).ConfigureAwait(false);
+                        while (Volatile.Read(ref urgentCoverRequests) > 0)
+                            await Task.Delay(250, stopping.Token).ConfigureAwait(false);
                         operationLease = ResourceOperationLock.TryAcquire();
                         if (operationLease == null)
                             await Task.Delay(250, stopping.Token).ConfigureAwait(false);
                     }
                     using (operationLease)
                     {
-                    await MediaCoverService.CreatePersistentCoverAsync(
-                        request.SourcePath,
-                        output,
-                        state.Settings,
-                        stopping.Token).ConfigureAwait(false);
+                        await MediaCoverService.CreatePersistentCoverAsync(
+                            request.SourcePath,
+                            output,
+                            state.Settings,
+                            stopping.Token).ConfigureAwait(false);
                     }
                     await Task.Delay(100, stopping.Token).ConfigureAwait(false);
                 }
@@ -536,6 +569,8 @@ internal sealed class LibraryCatalogService : IDisposable
             stopping.Token.ThrowIfCancellationRequested();
             while (state.Queue.IsRunning || state.Storage.IsRunning)
                 await Task.Delay(1000, stopping.Token).ConfigureAwait(false);
+            while (Volatile.Read(ref urgentCoverRequests) > 0)
+                await Task.Delay(250, stopping.Token).ConfigureAwait(false);
 
             IDisposable? operationLease = null;
             try

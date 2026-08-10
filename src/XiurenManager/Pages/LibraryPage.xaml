@@ -177,6 +177,7 @@
                                         <Button Style="{StaticResource MediaCardButtonStyle}"
                                                 Tag="{Binding Item}"
                                                 Loaded="SetCard_OnLoaded"
+                                                Unloaded="SetCard_OnUnloaded"
                                                 Click="SetCard_OnClick">
                                             <Grid>
                                                 <Grid.RowDefinitions>

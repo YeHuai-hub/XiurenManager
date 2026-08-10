@@ -4,6 +4,18 @@ namespace XiurenManager;
 
 internal static class LocalScanner
 {
+    public static async Task ScanExclusiveAsync(
+        AppState state,
+        bool notify = true,
+        bool includeArchive = true,
+        CancellationToken token = default)
+    {
+        using var operationLease = await ResourceOperationLock.AcquireAsync(token);
+        await Task.Run(
+            () => Scan(state, notify, includeArchive, token),
+            token);
+    }
+
     public static void ScanExclusive(
         AppState state,
         bool notify = true,

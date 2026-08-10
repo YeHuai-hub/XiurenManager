@@ -41,6 +41,7 @@ public partial class ViewerWindow : FluentWindow
     private readonly DispatcherTimer slideshowTimer = new();
     private CancellationTokenSource? mediaLoadCts;
     private CancellationTokenSource? setLoadCts;
+    private CancellationTokenSource? imagePreloadCts;
     private LibVLC? libVlc;
     private MediaPlayer? player;
     private Media? playingMedia;
@@ -50,6 +51,7 @@ public partial class ViewerWindow : FluentWindow
     private bool initialSetLoaded;
     private int imageLoadVersion;
     private int setLoadVersion;
+    private int previousImageIndex = -1;
     private WindowState windowStateBeforeImmersive = WindowState.Normal;
 
     internal LocalStat CurrentSet => set;
@@ -94,10 +96,12 @@ public partial class ViewerWindow : FluentWindow
             slideshowTimer.Stop();
             CancelMediaLoad();
             CancelSetLoad();
+            CancelImagePreload();
             state.Settings.SlideshowSeconds = AutoPlaySpeed.Value;
             state.Settings.Save();
             state.WriteLog($"关闭浏览器: {set.Model} / {set.Title}");
             DisposePlayer();
+            MediaCoverService.TrimViewerImageCache();
         };
     }
 
@@ -141,10 +145,12 @@ public partial class ViewerWindow : FluentWindow
         slideshowTimer.Stop();
         CancelMediaLoad();
         CancelSetLoad();
+        CancelImagePreload();
         StopPlayback();
         HideVideoSurface();
         imageLoadVersion++;
         media.Clear();
+        previousImageIndex = -1;
         tags.Clear();
         TagEditor.Clear();
         CloseTags();
@@ -207,6 +213,8 @@ public partial class ViewerWindow : FluentWindow
         var loadToken = BeginMediaLoad();
         slideshowTimer.Stop();
         var item = media[index];
+        var direction = previousImageIndex >= 0 && index < previousImageIndex ? -1 : 1;
+        previousImageIndex = index;
         UpdateCanvasNavigationVisibility(item);
         var setPosition = setContext.Count > 1 ? $"套图 {setIndex + 1} / {setContext.Count}    " : "";
         MediaTitle.Text = $"{setPosition}{index + 1} / {media.Count}    {item.Name}";
@@ -214,6 +222,7 @@ public partial class ViewerWindow : FluentWindow
         ViewerMessage.Visibility = Visibility.Visible;
         if (item.IsVideo)
         {
+            CancelImagePreload();
             ShowVideo(item.Path);
             return;
         }
@@ -222,10 +231,36 @@ public partial class ViewerWindow : FluentWindow
         var version = imageLoadVersion;
         StopPlayback();
         HideVideoSurface();
-        ImageViewer.Source = null;
         ImageViewer.Visibility = Visibility.Visible;
+        if (MediaCoverService.TryGetViewerImage(
+                item.Path,
+                MediaCoverService.ViewerDisplayDecodeWidth,
+                out var cached) && cached != null)
+        {
+            ImageViewer.Source = cached;
+            ViewerMessage.Visibility = Visibility.Collapsed;
+            StartImagePreload(index, direction);
+            RestartSlideshow();
+            return;
+        }
+
+        var previewShown = false;
         try
         {
+            if (!MediaCoverService.TryGetViewerImage(item.Path, out cached) || cached == null)
+            {
+                cached = await MediaCoverService.LoadViewerPreviewAsync(
+                    item.Path,
+                    state.Settings,
+                    loadToken);
+            }
+            if (version != imageLoadVersion) return;
+            ImageViewer.Source = cached;
+            ViewerMessage.Visibility = Visibility.Collapsed;
+            previewShown = true;
+            StartImagePreload(index, direction);
+            RestartSlideshow();
+
             var source = await MediaCoverService.LoadViewerImageAsync(
                 item.Path,
                 state.Settings,
@@ -233,7 +268,6 @@ public partial class ViewerWindow : FluentWindow
             if (version != imageLoadVersion) return;
             ImageViewer.Source = source;
             ViewerMessage.Visibility = Visibility.Collapsed;
-            RestartSlideshow();
         }
         catch (OperationCanceledException)
         {
@@ -242,6 +276,11 @@ public partial class ViewerWindow : FluentWindow
         catch (Exception ex)
         {
             if (version != imageLoadVersion) return;
+            if (previewShown)
+            {
+                state.WriteLog($"高清图片升级跳过: {item.Name} | {ex.Message}");
+                return;
+            }
             ViewerMessage.Text = "图片无法显示：" + ex.Message;
             RestartSlideshow();
         }
@@ -268,6 +307,59 @@ public partial class ViewerWindow : FluentWindow
         setLoadVersion++;
         var previous = setLoadCts;
         setLoadCts = null;
+        if (previous == null) return;
+        previous.Cancel();
+    }
+
+    private void StartImagePreload(int currentIndex, int direction)
+    {
+        CancelImagePreload();
+        var cancellation = new CancellationTokenSource();
+        imagePreloadCts = cancellation;
+        var candidates = direction >= 0
+            ? new[] { currentIndex + 1, currentIndex + 2, currentIndex - 1 }
+            : new[] { currentIndex - 1, currentIndex - 2, currentIndex + 1 };
+        var rows = candidates
+            .Where(index => index >= 0 && index < media.Count)
+            .Select(index => media[index])
+            .Where(item => !item.IsVideo)
+            .DistinctBy(item => item.Path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        _ = PreloadImagesAsync(rows, cancellation);
+    }
+
+    private async Task PreloadImagesAsync(
+        IReadOnlyList<ViewerMediaRow> candidates,
+        CancellationTokenSource cancellation)
+    {
+        try
+        {
+            foreach (var candidate in candidates)
+            {
+                cancellation.Token.ThrowIfCancellationRequested();
+                await MediaCoverService.PreloadViewerImageAsync(
+                    candidate.Path,
+                    state.Settings,
+                    cancellation.Token);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            state.WriteLog($"图片预加载跳过: {ex.Message}");
+        }
+        finally
+        {
+            if (ReferenceEquals(imagePreloadCts, cancellation))
+                imagePreloadCts = null;
+            cancellation.Dispose();
+        }
+    }
+
+    private void CancelImagePreload()
+    {
+        var previous = imagePreloadCts;
+        imagePreloadCts = null;
         if (previous == null) return;
         previous.Cancel();
     }

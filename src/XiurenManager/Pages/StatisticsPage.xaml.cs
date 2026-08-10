@@ -125,7 +125,19 @@ public partial class StatisticsPage : Page
 
     private async void Rescan_OnClick(object sender, RoutedEventArgs e)
     {
-        await Task.Run(() => LocalScanner.ScanExclusive(state));
-        Refresh();
+        try
+        {
+            await LocalScanner.ScanExclusiveAsync(state);
+            Refresh();
+        }
+        catch (Exception ex)
+        {
+            state.WriteLog("资源统计扫描失败: " + ex.Message);
+            MessageBox.Show(
+                ErrorText.Format(ex),
+                "扫描失败",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
     }
 }
