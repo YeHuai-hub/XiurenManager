@@ -19,6 +19,7 @@ internal sealed class AppState
     public QueueService Queue { get; }
     public StorageMigrationService Storage { get; }
     public MetadataSidecarCoordinator Metadata { get; }
+    public LibraryCatalogService Catalog { get; }
     private readonly Channel<string> persistentLog = Channel.CreateUnbounded<string>(
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
     private LibraryNavigationTarget? pendingLibraryNavigation;
@@ -29,6 +30,7 @@ internal sealed class AppState
 
     public AppState()
     {
+        Catalog = new LibraryCatalogService(this);
         Queue = new QueueService(this);
         Storage = new StorageMigrationService(this);
         Metadata = new MetadataSidecarCoordinator(this);

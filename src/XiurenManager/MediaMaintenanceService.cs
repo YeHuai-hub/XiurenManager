@@ -179,20 +179,7 @@ internal static class MediaMaintenanceService
             }
         }
         if (deletedPaths.Count > 0)
-        {
-            state.Database.LocalFiles.RemoveAll(item =>
-                deletedPaths.Contains(
-                    Path.GetFullPath(item.LocalDir).TrimEnd('\\')));
-            state.Database.Save();
-        }
-        foreach (var storageTier in requestedEntries
-                     .Select(entry => entry.StorageTier)
-                     .Distinct(StringComparer.OrdinalIgnoreCase))
-            LocalScanner.RefreshZeroMediaEntries(
-                state,
-                storageTier,
-                notify: false,
-                confirmedDeletedPaths: deletedPaths);
+            state.Catalog.MarkDeletedPaths(deletedPaths, "用户已确认清理空套图目录");
         if (deleted > 0)
             state.NotifyDataChanged();
         return new EmptyDirectoryCleanupResult(deleted, failed);

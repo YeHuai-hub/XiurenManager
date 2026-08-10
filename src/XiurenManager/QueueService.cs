@@ -29,7 +29,7 @@ internal sealed class QueueService
         var latest = Database.Load();
         state.Database.Resources = latest.Resources;
         state.Database.Jobs = latest.Jobs;
-        state.Database.LocalFiles = latest.LocalFiles;
+        state.Database.LocalFiles = state.Catalog.Snapshot().ToList();
         var interrupted = state.Database.Jobs.Where(x =>
             x.Status.Equals("Running", StringComparison.OrdinalIgnoreCase)).ToList();
         foreach (var job in interrupted)

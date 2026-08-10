@@ -25,7 +25,7 @@ public sealed class ModelLibraryRow
 internal sealed class SetCardRow : INotifyPropertyChanged
 {
     private ImageSource? cover;
-    private string placeholder = "正在载入封面";
+    private string placeholder = "等待本地封面";
 
     public LocalStat Item { get; init; } = new();
     public int Score { get; init; }
@@ -36,7 +36,7 @@ internal sealed class SetCardRow : INotifyPropertyChanged
     public string MediaLabel => Item.VideoCount + Item.InvalidVideoCount > 0
         ? $"{Item.ImageCount} 图  {Item.VideoCount + Item.InvalidVideoCount} 视"
         : $"{Item.ImageCount} 张";
-    public string SizeLabel => $"{Item.StorageTier} · {FormatBytes(Item.TotalBytes)}";
+    public string SizeLabel => $"{Item.StorageTier} · {StatusLabel(Item)} · {FormatBytes(Item.TotalBytes)}";
 
     public ImageSource? Cover
     {
@@ -79,6 +79,17 @@ internal sealed class SetCardRow : INotifyPropertyChanged
         }
         return $"{value:0.##} {units[index]}";
     }
+
+    private static string StatusLabel(LocalStat item) => item.Availability switch
+    {
+        CatalogStatuses.Available => "完整",
+        CatalogStatuses.Offline => "离线",
+        CatalogStatuses.Missing => "缺失",
+        CatalogStatuses.Partial => "部分缺失",
+        CatalogStatuses.Corrupt => "有损坏",
+        CatalogStatuses.Deleted => "已删除",
+        _ => "未验证"
+    };
 }
 
 internal sealed class SetCardGroup
@@ -93,9 +104,12 @@ internal sealed record LibraryViewState(
 
 public partial class LibraryPage : Page
 {
+    private const int CardBatchSize = 50;
     private readonly AppState state = App.State;
     private readonly ObservableCollection<ModelLibraryRow> models = [];
     private SetCardRow[] currentCards = [];
+    private LocalStat[] catalogSnapshot = [];
+    private int displayedCardCount;
     private int cardColumns;
     private CancellationTokenSource coverCts = new();
     private bool fileOperationRunning;
@@ -144,7 +158,8 @@ public partial class LibraryPage : Page
             FavoriteOnly.IsChecked = false;
         }
         categoryFilterLoading = true;
-        var categoryItems = state.Database.LocalFiles
+        catalogSnapshot = state.Catalog.Snapshot();
+        var categoryItems = catalogSnapshot
             .Select(x => x.Category)
             .Concat(LibraryPaths.Categories(state.Settings))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -162,14 +177,13 @@ public partial class LibraryPage : Page
         selectedCategory = CategoryFilter.SelectedItem as string ?? "全部分类";
         categoryFilterLoading = false;
         models.Clear();
-        var localFiles = state.Database.LocalFiles
+        var localFiles = catalogSnapshot
             .Where(x => selectedCategory.Equals("全部分类", StringComparison.OrdinalIgnoreCase) ||
                         x.Category.Equals(
                             selectedCategory,
                             StringComparison.OrdinalIgnoreCase))
             .ToArray();
         foreach (var group in localFiles
-                     .Where(x => Directory.Exists(x.LocalDir))
                      .GroupBy(x => new { x.Category, x.Model })
                      .Select(g => new ModelLibraryRow
                      {
@@ -189,13 +203,16 @@ public partial class LibraryPage : Page
         var sets = localFiles.Length;
         var images = localFiles.Sum(x => x.ImageCount);
         var videos = localFiles.Sum(x => x.VideoCount + x.InvalidVideoCount);
+        var unavailable = localFiles.Count(x =>
+            x.Availability is CatalogStatuses.Missing or CatalogStatuses.Offline or CatalogStatuses.Deleted);
         var categoryCount = localFiles
             .Select(x => x.Category)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Count();
         LibrarySummary.Text =
             $"{categoryCount} 个分类 · {models.Count} 个人物 · {sets} 套 · " +
-            $"{images:N0} 张图片 · {videos:N0} 个视频";
+            $"{images:N0} 张图片 · {videos:N0} 个视频" +
+            (unavailable > 0 ? $" · {unavailable} 套待核验" : "");
         if (models.Count == 0)
         {
             currentCards = [];
@@ -276,6 +293,7 @@ public partial class LibraryPage : Page
         coverCts.Dispose();
         coverCts = new CancellationTokenSource();
         currentCards = [];
+        displayedCardCount = 0;
         SetCards.ItemsSource = Array.Empty<SetCardGroup>();
 
         if (ModelList.SelectedItem is not ModelLibraryRow model)
@@ -289,7 +307,7 @@ public partial class LibraryPage : Page
         var terms = filter.Split(
             [' ', '\t', ',', '，', ';', '；', '|'],
             StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var values = state.Database.LocalFiles
+        var values = catalogSnapshot
             .Where(x => x.Category.Equals(
                 model.Category,
                 StringComparison.OrdinalIgnoreCase))
@@ -309,7 +327,8 @@ public partial class LibraryPage : Page
             .ThenByDescending(x => x.Item.LastScanned)
             .ThenBy(x => x.Title)
             .ToArray();
-        FilterResultText.Text = $"{currentCards.Length} 套";
+        displayedCardCount = Math.Min(CardBatchSize, currentCards.Length);
+        UpdateFilterResultText();
         EmptyLibrary.Visibility = currentCards.Length == 0
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -336,15 +355,43 @@ public partial class LibraryPage : Page
         var columns = Math.Max(1, (int)(availableWidth / 234));
         cardColumns = columns;
 
-        var groups = new List<SetCardGroup>((currentCards.Length + columns - 1) / columns);
-        for (var index = 0; index < currentCards.Length; index += columns)
+        var visibleCards = currentCards.Take(displayedCardCount).ToArray();
+        var groups = new List<SetCardGroup>((visibleCards.Length + columns - 1) / columns);
+        for (var index = 0; index < visibleCards.Length; index += columns)
         {
             groups.Add(new SetCardGroup
             {
-                Items = currentCards.Skip(index).Take(columns).ToArray()
+                Items = visibleCards.Skip(index).Take(columns).ToArray()
             });
         }
         SetCards.ItemsSource = groups;
+    }
+
+    private void SetCards_OnScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        if (displayedCardCount >= currentCards.Length ||
+            e.ExtentHeight <= 0 ||
+            e.VerticalOffset + e.ViewportHeight < e.ExtentHeight - 2)
+        {
+            return;
+        }
+        var offset = e.VerticalOffset;
+        displayedCardCount = Math.Min(
+            currentCards.Length,
+            displayedCardCount + CardBatchSize);
+        RebuildCardGroups();
+        UpdateFilterResultText();
+        Dispatcher.BeginInvoke(() =>
+            FindVisualChild<ScrollViewer>(SetCards)?.ScrollToVerticalOffset(offset));
+    }
+
+    private void UpdateFilterResultText()
+    {
+        FilterResultText.Text = currentCards.Length == 0
+            ? "0 套"
+            : displayedCardCount >= currentCards.Length
+                ? $"{currentCards.Length} 套"
+                : $"{displayedCardCount}/{currentCards.Length}";
     }
 
     private void SetCards_OnSizeChanged(object sender, SizeChangedEventArgs e)
@@ -369,13 +416,12 @@ public partial class LibraryPage : Page
         card.IsCoverLoading = true;
         try
         {
-            card.Cover = await MediaCoverService.LoadCoverAsync(
+            card.Cover = await state.Catalog.LoadCoverAsync(
                 card.Item,
-                state.Settings,
                 token);
             card.CoverAttempted = true;
             if (card.Cover == null)
-                card.Placeholder = "无可用封面";
+                card.Placeholder = "暂无本地封面";
         }
         catch (OperationCanceledException) { }
         catch
@@ -421,6 +467,7 @@ public partial class LibraryPage : Page
             item.Category.Contains(term, StringComparison.OrdinalIgnoreCase) ||
             item.Model.Contains(term, StringComparison.OrdinalIgnoreCase) ||
             item.LocalDir.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+            item.Availability.Contains(term, StringComparison.OrdinalIgnoreCase) ||
             tags.Any(tag => tag.Contains(term, StringComparison.OrdinalIgnoreCase)));
     }
 
@@ -437,9 +484,16 @@ public partial class LibraryPage : Page
             LoadLibrary();
     }
 
-    private void SetCard_OnClick(object sender, RoutedEventArgs e)
+    private async void SetCard_OnClick(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: LocalStat item }) return;
+        if (item.Availability.Equals(CatalogStatuses.Deleted, StringComparison.OrdinalIgnoreCase))
+        {
+            await ShowInfoAsync(
+                "该套已删除",
+                "资源账本仍保留历史统计和下载来源；重新下载或恢复目录后再执行资源扫描即可重新核验。");
+            return;
+        }
         var viewState = CaptureViewState();
         var context = currentCards.Select(card => card.Item).ToArray();
         var viewer = new ViewerWindow(item, context)
@@ -515,9 +569,9 @@ public partial class LibraryPage : Page
         var oldPath = item.LocalDir;
         var succeeded = await RunFileOperationAsync(
             "正在重命名",
-            () => Directory.Move(oldPath, target));
+            () => Directory.Move(oldPath, target),
+            () => UpdateMovedMetadata(item, target));
         if (!succeeded) return;
-        UpdateMovedMetadata(item, target);
     }
 
     private async void MoveSet_OnClick(object sender, RoutedEventArgs e)
@@ -532,9 +586,9 @@ public partial class LibraryPage : Page
         var oldPath = item.LocalDir;
         var succeeded = await RunFileOperationAsync(
             "正在移动文件",
-            () => FileSystem.MoveDirectory(oldPath, target, false));
+            () => FileSystem.MoveDirectory(oldPath, target, false),
+            () => UpdateMovedMetadata(item, target));
         if (!succeeded) return;
-        UpdateMovedMetadata(item, target);
     }
 
     private async void CopySet_OnClick(object sender, RoutedEventArgs e)
@@ -548,9 +602,9 @@ public partial class LibraryPage : Page
 
         var succeeded = await RunFileOperationAsync(
             "正在复制文件",
-            () => FileSystem.CopyDirectory(item.LocalDir, target, false));
+            () => FileSystem.CopyDirectory(item.LocalDir, target, false),
+            () => AddCopiedStat(item, target));
         if (!succeeded) return;
-        AddCopiedStat(item, target);
     }
 
     private async void DeleteSet_OnClick(object sender, RoutedEventArgs e)
@@ -569,9 +623,9 @@ public partial class LibraryPage : Page
                 item.LocalDir,
                 UIOption.OnlyErrorDialogs,
                 RecycleOption.SendToRecycleBin,
-                UICancelOption.ThrowException));
+                UICancelOption.ThrowException),
+            () => RemoveDeletedStat(item));
         if (!succeeded) return;
-        RemoveDeletedStat(item);
     }
 
     private static LocalStat? MenuItemSet(object sender)
@@ -625,7 +679,10 @@ public partial class LibraryPage : Page
         return true;
     }
 
-    private async Task<bool> RunFileOperationAsync(string status, Action operation)
+    private async Task<bool> RunFileOperationAsync(
+        string status,
+        Action operation,
+        Action? commit = null)
     {
         fileOperationRunning = true;
         FileOperationText.Text = status;
@@ -635,7 +692,14 @@ public partial class LibraryPage : Page
         state.WriteLog($"{status}: {(ModelList.SelectedItem as ModelLibraryRow)?.Name}");
         try
         {
-            await Task.Run(operation);
+            await Task.Run(() =>
+            {
+                using var operationLease = ResourceOperationLock.TryAcquire() ??
+                    throw new InvalidOperationException(
+                        "下载、扫描或存储迁移正在使用资源库，请稍后重试。");
+                operation();
+                commit?.Invoke();
+            });
             return true;
         }
         catch (Exception ex)
@@ -675,19 +739,17 @@ public partial class LibraryPage : Page
             resource.Category = newCategory;
         }
 
-        state.Database.LocalFiles.RemoveAll(x =>
-            PathsEqual(x.LocalDir, oldPath) || PathsEqual(x.LocalDir, target));
         if (IsTrackedSetPath(target))
         {
-            item.LocalDir = target;
-            item.Category = newCategory;
-            item.Model = newModel;
-            item.Title = newTitle;
-            item.LastScanned = DateTime.Now.ToString("s");
-            state.Database.LocalFiles.Add(item);
+            state.Catalog.UpdateLocation(
+                item,
+                target,
+                newCategory,
+                newModel,
+                newTitle);
         }
-
-        state.Database.Save();
+        else
+            state.Catalog.MarkUnavailable(item, CatalogStatuses.Missing, "已移动到资源统计范围外");
         if (IsTrackedSetPath(target))
             state.Metadata.QueueSync(item);
         state.WriteLog($"套图位置已更新: {oldPath} -> {target}");
@@ -702,7 +764,6 @@ public partial class LibraryPage : Page
             return;
         }
 
-        state.Database.LocalFiles.RemoveAll(x => PathsEqual(x.LocalDir, target));
         var copied = new LocalStat
         {
             Category = TryGetTrackedLocation(
@@ -719,10 +780,10 @@ public partial class LibraryPage : Page
             VideoCount = source.VideoCount,
             InvalidVideoCount = source.InvalidVideoCount,
             TotalBytes = source.TotalBytes,
-            LastScanned = DateTime.Now.ToString("s")
+            LastScanned = DateTime.Now.ToString("s"),
+            StorageTier = StorageTiers.Local
         };
-        state.Database.LocalFiles.Add(copied);
-        state.Database.Save();
+        state.Catalog.AddCopy(source, copied);
         state.Metadata.QueueSync(copied);
         state.WriteLog($"套图统计已新增: {target}");
         state.NotifyDataChanged();
@@ -731,8 +792,7 @@ public partial class LibraryPage : Page
     private void RemoveDeletedStat(LocalStat item)
     {
         var path = item.LocalDir;
-        state.Database.LocalFiles.RemoveAll(x => PathsEqual(x.LocalDir, path));
-        state.Database.Save();
+        state.Catalog.MarkUnavailable(item, CatalogStatuses.Deleted, "用户已将整套资源移入回收站");
         state.WriteLog($"套图已移入回收站: {path}");
         state.NotifyDataChanged();
     }

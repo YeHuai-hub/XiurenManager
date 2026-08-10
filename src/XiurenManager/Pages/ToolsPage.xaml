@@ -25,13 +25,13 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel>
-                    <TextBlock Text="重新扫描本地资源" Style="{StaticResource SectionTitleStyle}" />
-                    <TextBlock Text="刷新媒体统计；空目录可先预览，再分别确认清理本地和 NAS。"
+                    <TextBlock Text="更新资源账本与封面" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Text="扫描原始目录并更新文件清单、本地封面和完整性状态；缺失资源会保留记录。"
                                Margin="0,6,0,0"
                                Style="{StaticResource SecondaryTextStyle}" />
                 </StackPanel>
                 <WrapPanel Grid.Column="1" VerticalAlignment="Center">
-                    <ui:Button Content="开始扫描"
+                    <ui:Button Content="更新账本"
                                Icon="{ui:SymbolIcon ArrowSync24}"
                                Click="Scan_OnClick" />
                     <ui:Button x:Name="CleanEmptyDirectoriesButton"

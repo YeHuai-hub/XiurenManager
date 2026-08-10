@@ -20,7 +20,21 @@ internal static class MediaCoverService
         CancellationToken token,
         int decodeWidth = 440)
     {
-        var cacheKey = item.LocalDir + "|" + item.LastScanned + "|" + item.TotalBytes + "|" + decodeWidth;
+        if (string.IsNullOrWhiteSpace(item.SetId)) return null;
+        return await LoadPersistentCoverAsync(
+            LibraryCatalogService.CoverPath(item.SetId),
+            token,
+            decodeWidth).ConfigureAwait(false);
+    }
+
+    public static async Task<ImageSource?> LoadPersistentCoverAsync(
+        string path,
+        CancellationToken token,
+        int decodeWidth = 440)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return null;
+        var info = new FileInfo(path);
+        var cacheKey = path + "|" + info.Length + "|" + info.LastWriteTimeUtc.Ticks + "|" + decodeWidth;
         if (CoverCache.TryGetValue(cacheKey, out var cached) &&
             cached.TryGetTarget(out var cachedImage))
         {
@@ -36,51 +50,10 @@ internal static class MediaCoverService
                 return cachedImage;
             }
 
-            var imageExts = settings.ImageExts.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var videoExts = settings.VideoExts.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var media = await Task.Run(
-                () => FindFirstMedia(item.LocalDir, imageExts, videoExts, token),
+            var result = await Task.Run(
+                () => LoadBitmap(path, decodeWidth),
                 token).ConfigureAwait(false);
-            ImageSource? result = null;
-            var image = media.Image;
-            if (image != null)
-            {
-                try
-                {
-                    result = await Task.Run(
-                        () => LoadBitmap(image, decodeWidth),
-                        token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch
-                {
-                    var converted = await ConvertToCoverAsync(
-                        image,
-                        settings,
-                        token,
-                        decodeWidth).ConfigureAwait(false);
-                    result = await Task.Run(
-                        () => LoadBitmap(converted, decodeWidth),
-                        token).ConfigureAwait(false);
-                }
-            }
-            else if (media.Video != null)
-            {
-                var converted = await ConvertToCoverAsync(
-                    media.Video,
-                    settings,
-                    token,
-                    decodeWidth).ConfigureAwait(false);
-                result = await Task.Run(
-                    () => LoadBitmap(converted, decodeWidth),
-                    token).ConfigureAwait(false);
-            }
-
-            if (result != null)
-                CoverCache[cacheKey] = new WeakReference<ImageSource>(result);
+            CoverCache[cacheKey] = new WeakReference<ImageSource>(result);
             TrimDeadCacheEntries();
             return result;
         }
@@ -96,24 +69,14 @@ internal static class MediaCoverService
         int count,
         CancellationToken token)
     {
-        return Task.Run(() =>
-        {
-            var extensions = settings.ImageExts
-                .Concat(settings.VideoExts)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            return Directory.EnumerateFiles(item.LocalDir, "*", SearchOption.AllDirectories)
-                .Where(path => !AppPaths.IsInsideTool(path))
-                .Where(path => extensions.Contains(Path.GetExtension(path)))
-                .Where(path => MediaFileValidator.IsUsable(path, settings.ImageExts, settings.VideoExts))
-                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-                .Take(Math.Max(0, count))
-                .Select(path =>
-                {
-                    token.ThrowIfCancellationRequested();
-                    return path;
-                })
-                .ToArray();
-        }, token);
+        return Task.Run(() => LibraryCatalogService.ReadCachedMedia(item)
+            .Take(Math.Max(0, count))
+            .Select(file =>
+            {
+                token.ThrowIfCancellationRequested();
+                return file.Path;
+            })
+            .ToArray(), token);
     }
 
     public static async Task<ImageSource?> LoadMediaPreviewAsync(
@@ -248,6 +211,72 @@ internal static class MediaCoverService
         finally
         {
             ViewerLoadGate.Release();
+        }
+    }
+
+    public static async Task CreatePersistentCoverAsync(
+        string sourcePath,
+        string outputPath,
+        Settings settings,
+        CancellationToken token,
+        int decodeWidth = 440)
+    {
+        if (File.Exists(outputPath)) return;
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+        var temp = outputPath + ".tmp";
+        TryDelete(temp);
+        try
+        {
+            var isImage = settings.ImageExts.Contains(
+                Path.GetExtension(sourcePath),
+                StringComparer.OrdinalIgnoreCase);
+            if (isImage)
+            {
+                try
+                {
+                    await Task.Run(() =>
+                    {
+                        token.ThrowIfCancellationRequested();
+                        var bitmap = LoadBitmap(sourcePath, decodeWidth);
+                        var encoder = new JpegBitmapEncoder { QualityLevel = 82 };
+                        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+                        using var stream = new FileStream(
+                            temp,
+                            FileMode.CreateNew,
+                            FileAccess.Write,
+                            FileShare.None);
+                        encoder.Save(stream);
+                    }, token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch
+                {
+                    var converted = await ConvertToCoverAsync(
+                        sourcePath,
+                        settings,
+                        token,
+                        decodeWidth).ConfigureAwait(false);
+                    File.Copy(converted, temp, true);
+                }
+            }
+            else
+            {
+                var converted = await ConvertToCoverAsync(
+                    sourcePath,
+                    settings,
+                    token,
+                    decodeWidth).ConfigureAwait(false);
+                File.Copy(converted, temp, true);
+            }
+            token.ThrowIfCancellationRequested();
+            File.Move(temp, outputPath, true);
+        }
+        finally
+        {
+            TryDelete(temp);
         }
     }
 

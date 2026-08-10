@@ -448,7 +448,8 @@ internal sealed class StorageMigrationService : IDisposable
         UpdateStatus(LoadStatus() with { Phase = "Finalized", Status = "Committing" });
 
         UpdateTrackedPaths(model.Model, model.Directory, destination);
-        state.Database.Save();
+        state.Catalog.ReconcileLocations(state.Database.LocalFiles.Where(item =>
+            item.Model.Equals(model.Model, StringComparison.OrdinalIgnoreCase)));
         state.Favorites.UpdateModelLocations(model.Model, model.Directory, destination);
         state.Metadata.QueueSync(state.Database.LocalFiles.Where(item =>
             item.Model.Equals(model.Model, StringComparison.OrdinalIgnoreCase)));
@@ -491,7 +492,8 @@ internal sealed class StorageMigrationService : IDisposable
             }
             var model = Path.GetFileName(status.SourcePath);
             UpdateTrackedPaths(model, status.SourcePath, status.DestinationPath);
-            state.Database.Save();
+            state.Catalog.ReconcileLocations(state.Database.LocalFiles.Where(item =>
+                item.Model.Equals(model, StringComparison.OrdinalIgnoreCase)));
             state.Favorites.UpdateModelLocations(model, status.SourcePath, status.DestinationPath);
             state.Metadata.QueueSync(state.Database.LocalFiles.Where(item =>
                 item.Model.Equals(model, StringComparison.OrdinalIgnoreCase)));

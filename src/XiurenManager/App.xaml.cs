@@ -35,6 +35,13 @@ public partial class App : Application
         }
         state = new AppState();
 
+        if (e.Args.Any(arg =>
+                arg.Equals("--migrate-catalog", StringComparison.OrdinalIgnoreCase)))
+        {
+            Shutdown(0);
+            return;
+        }
+
         var viewSetIndex = Array.FindIndex(e.Args, arg =>
             arg.Equals("--view-set", StringComparison.OrdinalIgnoreCase));
         if (viewSetIndex >= 0 && viewSetIndex + 1 < e.Args.Length)
@@ -62,7 +69,6 @@ public partial class App : Application
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
             await State.Metadata.QueueAllAsync(announce: true);
-            State.Metadata.Dispose();
             Shutdown(0);
             return;
         }
@@ -116,6 +122,9 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        state?.Catalog.Dispose();
+        state?.Metadata.Dispose();
+        state?.Storage.Dispose();
         instanceLease?.Dispose();
         instanceLease = null;
         base.OnExit(e);

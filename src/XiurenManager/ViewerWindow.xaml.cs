@@ -40,6 +40,7 @@ public partial class ViewerWindow : FluentWindow
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(300) };
     private readonly DispatcherTimer slideshowTimer = new();
     private CancellationTokenSource? mediaLoadCts;
+    private CancellationTokenSource? setLoadCts;
     private LibVLC? libVlc;
     private MediaPlayer? player;
     private Media? playingMedia;
@@ -48,6 +49,7 @@ public partial class ViewerWindow : FluentWindow
     private bool immersive;
     private bool initialSetLoaded;
     private int imageLoadVersion;
+    private int setLoadVersion;
     private WindowState windowStateBeforeImmersive = WindowState.Normal;
 
     internal LocalStat CurrentSet => set;
@@ -59,8 +61,12 @@ public partial class ViewerWindow : FluentWindow
         ViewerSetNavigationMode navigationMode = ViewerSetNavigationMode.Sequential)
     {
         var availableSets = (context ?? [set])
-            .Where(item => Directory.Exists(item.LocalDir))
-            .DistinctBy(item => Path.GetFullPath(item.LocalDir), StringComparer.OrdinalIgnoreCase)
+            .Where(item => CatalogStatuses.CanAttemptOpen(item.Availability))
+            .DistinctBy(
+                item => string.IsNullOrWhiteSpace(item.SetId)
+                    ? item.Category + "|" + item.Model + "|" + item.Title
+                    : item.SetId,
+                StringComparer.OrdinalIgnoreCase)
             .ToList();
         setIndex = availableSets.FindIndex(item => SameSet(item, set));
         if (setIndex < 0)
@@ -87,6 +93,7 @@ public partial class ViewerWindow : FluentWindow
         {
             slideshowTimer.Stop();
             CancelMediaLoad();
+            CancelSetLoad();
             state.Settings.SlideshowSeconds = AutoPlaySpeed.Value;
             state.Settings.Save();
             state.WriteLog($"关闭浏览器: {set.Model} / {set.Title}");
@@ -133,6 +140,7 @@ public partial class ViewerWindow : FluentWindow
         var previousSet = set;
         slideshowTimer.Stop();
         CancelMediaLoad();
+        CancelSetLoad();
         StopPlayback();
         HideVideoSurface();
         imageLoadVersion++;
@@ -147,7 +155,7 @@ public partial class ViewerWindow : FluentWindow
             tags.Add(tag);
         TagsStatus.Text = tags.Count == 0 ? "暂无标签" : $"已有 {tags.Count} 个标签";
         UpdateScore();
-        LoadMedia(selectLast);
+        _ = LoadMediaAsync(selectLast);
 
         if (!SameSet(previousSet, set))
             CurrentSetChanged?.Invoke(set);
@@ -156,27 +164,41 @@ public partial class ViewerWindow : FluentWindow
             state.WriteLog($"切换浏览套图: {set.Model} / {set.Title}");
     }
 
-    private void LoadMedia(bool selectLast)
+    private async Task LoadMediaAsync(bool selectLast)
     {
-        if (!Directory.Exists(set.LocalDir))
+        CancelSetLoad();
+        var cancellation = new CancellationTokenSource();
+        setLoadCts = cancellation;
+        var version = ++setLoadVersion;
+        ViewerMessage.Text = "正在读取套图索引";
+        ViewerMessage.Visibility = Visibility.Visible;
+        try
         {
-            ViewerMessage.Text = "本地目录不存在";
-            return;
+            var files = await state.Catalog.LoadMediaAsync(set, cancellation.Token);
+            if (version != setLoadVersion || cancellation.IsCancellationRequested)
+                return;
+            foreach (var file in files)
+                media.Add(new ViewerMediaRow { Path = file.Path, IsVideo = file.IsVideo });
+            if (media.Count == 0)
+            {
+                ViewerMessage.Text = "这套目录内没有可用的图片或视频";
+                return;
+            }
+            Filmstrip.SelectedIndex = selectLast ? media.Count - 1 : 0;
         }
-        var imageExts = state.Settings.ImageExts.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var videoExts = state.Settings.VideoExts.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var path in Directory.EnumerateFiles(set.LocalDir, "*", SearchOption.AllDirectories)
-                     .Where(x => !AppPaths.IsInsideTool(x))
-                     .Where(x => MediaFileValidator.IsUsable(x, imageExts, videoExts))
-                     .OrderBy(NaturalSortKey, StringComparer.OrdinalIgnoreCase))
-            media.Add(new ViewerMediaRow { Path = path, IsVideo = videoExts.Contains(Path.GetExtension(path)) });
-
-        if (media.Count == 0)
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
         {
-            ViewerMessage.Text = "这套目录内没有图片或视频";
-            return;
+            if (version != setLoadVersion) return;
+            ViewerMessage.Text = ex.Message;
+            ViewerMessage.Visibility = Visibility.Visible;
         }
-        Filmstrip.SelectedIndex = selectLast ? media.Count - 1 : 0;
+        finally
+        {
+            if (ReferenceEquals(setLoadCts, cancellation))
+                setLoadCts = null;
+            cancellation.Dispose();
+        }
     }
 
     private async void ShowMedia(int index)
@@ -239,6 +261,15 @@ public partial class ViewerWindow : FluentWindow
         if (previous == null) return;
         previous.Cancel();
         previous.Dispose();
+    }
+
+    private void CancelSetLoad()
+    {
+        setLoadVersion++;
+        var previous = setLoadCts;
+        setLoadCts = null;
+        if (previous == null) return;
+        previous.Cancel();
     }
 
     private void ShowVideo(string path)
@@ -347,24 +378,8 @@ public partial class ViewerWindow : FluentWindow
 
     private bool HasMedia(LocalStat candidate)
     {
-        try
-        {
-            var extensions = state.Settings.ImageExts
-                .Concat(state.Settings.VideoExts)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            return Directory.EnumerateFiles(candidate.LocalDir, "*", SearchOption.AllDirectories)
-                .Any(path =>
-                    !AppPaths.IsInsideTool(path) &&
-                    extensions.Contains(Path.GetExtension(path)) &&
-                    MediaFileValidator.IsUsable(
-                        path,
-                        state.Settings.ImageExts,
-                        state.Settings.VideoExts));
-        }
-        catch
-        {
-            return false;
-        }
+        return CatalogStatuses.CanAttemptOpen(candidate.Availability) &&
+               candidate.ImageCount + candidate.VideoCount + candidate.InvalidVideoCount > 0;
     }
 
     private void AutoPlayToggle_OnChecked(object sender, RoutedEventArgs e)
@@ -673,25 +688,24 @@ public partial class ViewerWindow : FluentWindow
         }
 
         var index = Filmstrip.SelectedIndex;
-        var bytes = new FileInfo(item.Path).Length;
         PrepareCurrentMediaForDeletion();
         MediaActionsButton.IsEnabled = false;
         try
         {
-            await Task.Run(() => FileSystem.DeleteFile(
-                item.Path,
-                UIOption.OnlyErrorDialogs,
-                RecycleOption.SendToRecycleBin,
-                UICancelOption.ThrowException));
+            await Task.Run(() =>
+            {
+                using var operationLease = ResourceOperationLock.TryAcquire() ??
+                    throw new InvalidOperationException(
+                        "下载、扫描或存储迁移正在使用资源库，请稍后重试。");
+                FileSystem.DeleteFile(
+                    item.Path,
+                    UIOption.OnlyErrorDialogs,
+                    RecycleOption.SendToRecycleBin,
+                    UICancelOption.ThrowException);
+                state.Catalog.MarkMediaDeleted(set, item.Path);
+            });
 
             media.Remove(item);
-            if (item.IsVideo)
-                set.VideoCount = Math.Max(0, set.VideoCount - 1);
-            else
-                set.ImageCount = Math.Max(0, set.ImageCount - 1);
-            set.TotalBytes = Math.Max(0, set.TotalBytes - bytes);
-            set.LastScanned = DateTime.Now.ToString("s");
-            state.Database.Save();
             state.Metadata.QueueSync(set);
             state.WriteLog($"已从查看器删除媒体: {item.Path}");
             state.NotifyDataChanged();
@@ -744,13 +758,21 @@ public partial class ViewerWindow : FluentWindow
         MediaActionsButton.IsEnabled = false;
         try
         {
-            await Task.Run(() => FileSystem.DeleteDirectory(
-                path,
-                UIOption.OnlyErrorDialogs,
-                RecycleOption.SendToRecycleBin,
-                UICancelOption.ThrowException));
-            state.Database.LocalFiles.RemoveAll(item => SameSet(item, set));
-            state.Database.Save();
+            await Task.Run(() =>
+            {
+                using var operationLease = ResourceOperationLock.TryAcquire() ??
+                    throw new InvalidOperationException(
+                        "下载、扫描或存储迁移正在使用资源库，请稍后重试。");
+                FileSystem.DeleteDirectory(
+                    path,
+                    UIOption.OnlyErrorDialogs,
+                    RecycleOption.SendToRecycleBin,
+                    UICancelOption.ThrowException);
+                state.Catalog.MarkUnavailable(
+                    set,
+                    CatalogStatuses.Deleted,
+                    "用户已从查看器将整套资源移入回收站");
+            });
             state.WriteLog($"已从查看器删除整套写真: {path}");
             state.NotifyDataChanged();
             Close();
@@ -869,9 +891,14 @@ public partial class ViewerWindow : FluentWindow
             match => match.Value.PadLeft(16, '0'));
     }
 
-    private static bool SameSet(LocalStat left, LocalStat right) =>
-        Path.GetFullPath(left.LocalDir)
+    private static bool SameSet(LocalStat left, LocalStat right)
+    {
+        if (!string.IsNullOrWhiteSpace(left.SetId) &&
+            !string.IsNullOrWhiteSpace(right.SetId))
+            return left.SetId.Equals(right.SetId, StringComparison.OrdinalIgnoreCase);
+        return Path.GetFullPath(left.LocalDir)
             .Equals(Path.GetFullPath(right.LocalDir), StringComparison.OrdinalIgnoreCase);
+    }
 
     private static string FormatTime(long milliseconds)
     {

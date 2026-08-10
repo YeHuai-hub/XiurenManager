@@ -139,6 +139,7 @@
                      ScrollViewer.CanContentScroll="True"
                      VirtualizingPanel.IsVirtualizing="True"
                      VirtualizingPanel.VirtualizationMode="Recycling"
+                     ScrollViewer.ScrollChanged="SetCards_OnScrollChanged"
                      SizeChanged="SetCards_OnSizeChanged">
                 <ListBox.ItemContainerStyle>
                     <Style TargetType="ListBoxItem">

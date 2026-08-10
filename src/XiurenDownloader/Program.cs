@@ -284,6 +284,10 @@ internal static class AppPaths
     public static readonly string ToolRoot = FindToolRoot();
     public static readonly string ConfigDir = Path.Combine(ToolRoot, "config");
     public static readonly string DataDir = Path.Combine(ToolRoot, "data");
+    public static readonly string CacheDir = Path.Combine(ToolRoot, "cache");
+    public static readonly string LibraryLedgerFile = Path.Combine(DataDir, "library-ledger-v1.json");
+    public static readonly string ManifestDir = Path.Combine(DataDir, "manifests");
+    public static readonly string CoverCacheDir = Path.Combine(CacheDir, "covers");
     public static readonly string LogDir = Path.Combine(ToolRoot, "logs");
     public static readonly string SettingsFile = Path.Combine(ConfigDir, "settings.json");
     public static readonly string DbFile = Path.Combine(DataDir, "xiuren.db");
@@ -910,6 +914,12 @@ internal sealed class JobItem
 
 internal sealed class LocalStat
 {
+    public string SetId { get; set; } = "";
+    public string SourcePostId { get; set; } = "";
+    public string SourceUrl { get; set; } = "";
+    public string PanUrl { get; set; } = "";
+    public string PanPassword { get; set; } = "";
+    public string ExtractPassword { get; set; } = "";
     public string Category { get; set; } = LibraryPaths.DefaultCategory;
     public string Model { get; set; } = "";
     public string Title { get; set; } = "";
@@ -919,7 +929,29 @@ internal sealed class LocalStat
     public int VideoCount { get; set; }
     public int InvalidVideoCount { get; set; }
     public long TotalBytes { get; set; }
+    public int ExpectedImageCount { get; set; }
+    public int ExpectedVideoCount { get; set; }
+    public long ExpectedTotalBytes { get; set; }
     public string LastScanned { get; set; } = "";
+    public string Availability { get; set; } = CatalogStatuses.Unverified;
+    public string AvailabilityReason { get; set; } = "";
+    public string LastVerified { get; set; } = "";
+    public string LastComplete { get; set; } = "";
+    public string MissingSince { get; set; } = "";
+}
+
+internal static class CatalogStatuses
+{
+    public const string Available = "Available";
+    public const string Offline = "Offline";
+    public const string Missing = "Missing";
+    public const string Partial = "Partial";
+    public const string Corrupt = "Corrupt";
+    public const string Unverified = "Unverified";
+    public const string Deleted = "Deleted";
+
+    public static bool CanAttemptOpen(string? status) =>
+        !string.Equals(status, Deleted, StringComparison.OrdinalIgnoreCase);
 }
 
 internal static class StorageTiers

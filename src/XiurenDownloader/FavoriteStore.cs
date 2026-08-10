@@ -6,6 +6,7 @@ namespace XiurenDownloader;
 
 internal sealed class FavoriteEntry
 {
+    public string SetId { get; set; } = "";
     public string LocalDir { get; set; } = "";
     public string Model { get; set; } = "";
     public string Title { get; set; } = "";
@@ -101,6 +102,7 @@ internal sealed class FavoriteStore
             }
 
             entry.LocalDir = NormalizePath(item.LocalDir);
+            entry.SetId = item.SetId;
             entry.Model = item.Model;
             entry.Title = item.Title;
             entry.Score = Math.Max(0, entry.Score + delta);
@@ -127,6 +129,7 @@ internal sealed class FavoriteStore
             }
 
             entry.LocalDir = NormalizePath(item.LocalDir);
+            entry.SetId = item.SetId;
             entry.Model = item.Model;
             entry.Title = item.Title;
             entry.Tags = values;
@@ -147,6 +150,7 @@ internal sealed class FavoriteStore
             if (entry == null) return;
 
             entry.LocalDir = NormalizePath(localDir);
+            entry.SetId = item.SetId;
             entry.Model = model;
             entry.Title = title;
             entry.UpdatedAt = DateTime.Now.ToString("s");
@@ -176,8 +180,45 @@ internal sealed class FavoriteStore
         }
     }
 
+    public void ReconcileSetIds(IEnumerable<LocalStat> catalog)
+    {
+        lock (FileGate)
+        {
+            var items = catalog.ToArray();
+            var changed = false;
+            foreach (var entry in entries.Where(x => string.IsNullOrWhiteSpace(x.SetId)))
+            {
+                var path = NormalizePath(entry.LocalDir);
+                var match = items.FirstOrDefault(item =>
+                    NormalizePath(item.LocalDir).Equals(
+                        path,
+                        StringComparison.OrdinalIgnoreCase));
+                if (match == null)
+                {
+                    var titleMatches = items.Where(item =>
+                            item.Model.Equals(entry.Model, StringComparison.OrdinalIgnoreCase) &&
+                            item.Title.Equals(entry.Title, StringComparison.OrdinalIgnoreCase))
+                        .Take(2)
+                        .ToArray();
+                    if (titleMatches.Length == 1)
+                        match = titleMatches[0];
+                }
+                if (match == null || string.IsNullOrWhiteSpace(match.SetId)) continue;
+                entry.SetId = match.SetId;
+                changed = true;
+            }
+            if (changed) Save();
+        }
+    }
+
     private FavoriteEntry? Find(LocalStat item)
     {
+        if (!string.IsNullOrWhiteSpace(item.SetId))
+        {
+            var byId = entries.FirstOrDefault(x =>
+                x.SetId.Equals(item.SetId, StringComparison.OrdinalIgnoreCase));
+            if (byId != null) return byId;
+        }
         var dir = NormalizePath(item.LocalDir);
         var byPath = entries.FirstOrDefault(x =>
             NormalizePath(x.LocalDir).Equals(dir, StringComparison.OrdinalIgnoreCase));

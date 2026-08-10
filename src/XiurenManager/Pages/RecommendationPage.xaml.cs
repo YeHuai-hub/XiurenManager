@@ -84,7 +84,7 @@ public partial class RecommendationPage : Page
     private void State_OnDataChanged(object? sender, EventArgs e)
     {
         if (viewerOpen) return;
-        if (recommendation == null || !Directory.Exists(recommendation.LocalDir))
+        if (recommendation == null || !IsEligible(recommendation))
             PickRecommendation();
     }
 
@@ -403,32 +403,22 @@ public partial class RecommendationPage : Page
     }
 
     private static bool IsEligible(LocalStat item) =>
-        Directory.Exists(item.LocalDir) &&
+        IsLocallyRecommendable(item) &&
         item.ImageCount + item.VideoCount > 0;
 
-    private bool HasUsableMedia(LocalStat item)
-    {
-        try
-        {
-            var extensions = state.Settings.ImageExts
-                .Concat(state.Settings.VideoExts)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            return Directory.EnumerateFiles(item.LocalDir, "*", SearchOption.AllDirectories)
-                .Any(path =>
-                    !AppPaths.IsInsideTool(path) &&
-                    extensions.Contains(Path.GetExtension(path)) &&
-                    MediaFileValidator.IsUsable(
-                        path,
-                        state.Settings.ImageExts,
-                        state.Settings.VideoExts));
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    private static bool HasUsableMedia(LocalStat item) =>
+        IsLocallyRecommendable(item) &&
+        item.ImageCount + item.VideoCount > 0;
+
+    private static bool IsLocallyRecommendable(LocalStat item) =>
+        item.Availability is CatalogStatuses.Available or
+            CatalogStatuses.Partial or
+            CatalogStatuses.Corrupt or
+            CatalogStatuses.Unverified;
 
     private static bool SameSet(LocalStat left, LocalStat right) =>
+        (!string.IsNullOrWhiteSpace(left.SetId) &&
+         left.SetId.Equals(right.SetId, StringComparison.OrdinalIgnoreCase)) ||
         Path.GetFullPath(left.LocalDir)
             .Equals(Path.GetFullPath(right.LocalDir), StringComparison.OrdinalIgnoreCase);
 

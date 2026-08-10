@@ -39,6 +39,9 @@ dotnet run --project src\XiurenManager\XiurenManager.csproj
 - 新任务下载分类：可在搜索页选择 `秀人`、`COS`、`微密圈` 或自定义分类
 - 配置文件：`config\settings.json`
 - 数据库：`data\xiuren.db`
+- 资源账本：`data\library-ledger-v1.json`
+- 套图文件清单：`data\manifests`
+- 本地封面缓存：`cache\covers`
 - 日志目录：`logs`
 - FFmpeg：`tools\ffmpeg\bin`
 - 喜爱值：`data\favorites.json`
@@ -54,6 +57,10 @@ dotnet run --project src\XiurenManager\XiurenManager.csproj
 - “下载全部就绪项”只处理当前选择分类，避免跨分类误下载
 - 媒体库采用 `分类\人物\套图` 三级结构，可同时管理秀人、COS、微密圈及后续自定义分类
 - 媒体库顶部可按分类筛选；统计、随机推荐和应用内浏览会保留套图所属分类
+- 媒体库只读取本地资源账本和封面缓存；进入查看器时才访问当前套图原目录
+- 套图使用稳定 ID 关联标签、清单和封面，移动到 NAS 或纠正分类后不会丢失关联
+- 原目录离线、缺失、部分缺失或已删除时仍保留历史统计和下载来源，不会被重新扫描静默抹除
+- 套图卡片每次加载 50 套，滚动到底部后继续追加，避免一次创建大量界面元素
 - 压缩包自动改名为页面标题
 - 自动解压，解压成功后可自动删除原压缩包
 - 下载完成前使用 ffprobe/ffmpeg 检查视频结构，并抽查开头、中段、结尾画面

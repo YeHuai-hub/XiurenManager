@@ -36,6 +36,7 @@ internal static class LocalScanner
         CancellationToken token = default)
     {
         token.ThrowIfCancellationRequested();
+        state.Catalog.RefreshSourceMetadataIndex();
         var root = state.Settings.DownloadRoot;
         Directory.CreateDirectory(root);
         foreach (var category in LibraryPaths.Categories(state.Settings))
@@ -44,6 +45,7 @@ internal static class LocalScanner
         var imageExts = state.Settings.ImageExts.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var videoExts = state.Settings.VideoExts.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var results = new Dictionary<string, LocalStat>(StringComparer.OrdinalIgnoreCase);
+        var archiveMode = ArchiveCatalogScanMode.Skipped;
         var previousArchive = state.Database.LocalFiles
             .Where(item => item.StorageTier.Equals(
                 StorageTiers.Archive,
@@ -93,12 +95,14 @@ internal static class LocalScanner
                 token.ThrowIfCancellationRequested();
                 if (!Directory.Exists(archiveRoot))
                 {
+                    archiveMode = ArchiveCatalogScanMode.Offline;
                     state.WriteLog("NAS 在资源库扫描过程中离线，本轮 NAS 结果未提交并保留原快照。");
                     foreach (var item in previousArchive)
                         results.TryAdd(StatKey(item), item);
                 }
                 else
                 {
+                    archiveMode = ArchiveCatalogScanMode.Verified;
                     foreach (var item in previousArchive.Where(item =>
                                  failedArchiveDirectories.Contains(NormalizePath(item.LocalDir))))
                         archiveResults.TryAdd(StatKey(item), item);
@@ -108,6 +112,7 @@ internal static class LocalScanner
             }
             else
             {
+                archiveMode = ArchiveCatalogScanMode.Offline;
                 state.WriteLog("NAS 资源库当前离线，保留上次扫描记录。");
                 foreach (var item in previousArchive)
                     results.TryAdd(StatKey(item), item);
@@ -131,17 +136,18 @@ internal static class LocalScanner
         }
 
         token.ThrowIfCancellationRequested();
-        state.Database.LocalFiles = results.Values
-            .OrderBy(x => x.Category, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(x => x.Model, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(x => x.Title, StringComparer.OrdinalIgnoreCase)
+        state.Database.LocalFiles = state.Catalog.MergeObserved(
+                results.Values,
+                verifyLocal: true,
+                archiveMode)
             .ToList();
         ReconcileResourceLocations(state, token);
         state.Database.Save();
         state.Metadata.QueueSync(state.Database.LocalFiles);
-        var localCount = results.Values.Count(x => x.StorageTier == StorageTiers.Local);
-        var archiveCount = results.Count - localCount;
-        state.WriteLog($"资源库扫描完成: {results.Count} 套（本地 {localCount} / NAS {archiveCount}）");
+        var localCount = state.Database.LocalFiles.Count(x =>
+            x.StorageTier == StorageTiers.Local);
+        var archiveCount = state.Database.LocalFiles.Count - localCount;
+        state.WriteLog($"资源账本扫描完成: {state.Database.LocalFiles.Count} 套（本地 {localCount} / NAS {archiveCount}）");
         if (notify)
             state.NotifyDataChanged();
     }
@@ -154,6 +160,7 @@ internal static class LocalScanner
         CancellationToken token = default)
     {
         token.ThrowIfCancellationRequested();
+        state.Catalog.RefreshSourceMetadataIndex();
         var targets = resources
             .Select(x => (
                 Category: LibraryPaths.NormalizeCategory(x.Category),
@@ -243,14 +250,6 @@ internal static class LocalScanner
                                      NormalizePath(item.LocalDir))))
                         results.TryAdd(StatKey(item), item);
                 }
-                else
-                {
-                    foreach (var item in previous.Where(item =>
-                                 item.StorageTier.Equals(
-                                     StorageTiers.Archive,
-                                     StringComparison.OrdinalIgnoreCase)))
-                        results.TryAdd(StatKey(item), item);
-                }
             }
             else
             {
@@ -263,6 +262,11 @@ internal static class LocalScanner
         }
 
         token.ThrowIfCancellationRequested();
+        var archiveMode = !includeArchive || string.IsNullOrWhiteSpace(state.Settings.ArchiveRoot)
+            ? ArchiveCatalogScanMode.Skipped
+            : archiveOnline && Directory.Exists(state.Settings.ArchiveRoot)
+                ? ArchiveCatalogScanMode.Verified
+                : ArchiveCatalogScanMode.Offline;
         if (archiveOnline && !Directory.Exists(state.Settings.ArchiveRoot))
         {
             foreach (var key in results
@@ -279,10 +283,11 @@ internal static class LocalScanner
                 results.TryAdd(StatKey(item), item);
             state.WriteLog("NAS 在增量扫描过程中离线，本轮 NAS 结果未提交并保留原快照。");
         }
-        state.Database.LocalFiles = results.Values
-            .OrderBy(x => x.Category, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(x => x.Model, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(x => x.Title, StringComparer.OrdinalIgnoreCase)
+        state.Database.LocalFiles = state.Catalog.MergeObserved(
+                results.Values,
+                verifyLocal: true,
+                archiveMode,
+                targetKeys)
             .ToList();
         ReconcileResourceLocations(state, token, targetKeys);
         state.Database.Save();
@@ -570,6 +575,7 @@ internal static class LocalScanner
                     TotalBytes = files.Sum(x => x.Length),
                     LastScanned = DateTime.Now.ToString("s")
                 };
+                state.Catalog.RecordManifest(item, files);
                 var key = StatKey(item);
                 if (!overwrite && results.TryGetValue(key, out var existing) &&
                     !PathsEqual(existing.LocalDir, item.LocalDir))

@@ -52,6 +52,9 @@ internal static class ModelCategoryUnifier
                 local.LocalDir);
         }
 
+        state.Catalog.ReconcileLocations(state.Database.LocalFiles.Where(x =>
+            x.Model.Equals(model, StringComparison.OrdinalIgnoreCase)));
+
         state.Metadata.QueueSync(state.Database.LocalFiles.Where(x =>
             x.Model.Equals(model, StringComparison.OrdinalIgnoreCase)));
 
@@ -138,10 +141,11 @@ internal static class ModelCategoryUnifier
 
         if (changed == 0)
             return 0;
-        state.Database.Save();
         var changedModels = groups
             .Select(group => group.Key)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        state.Catalog.ReconcileLocations(state.Database.LocalFiles.Where(item =>
+            changedModels.Contains(item.Model)));
         state.Metadata.QueueSync(state.Database.LocalFiles.Where(item =>
             changedModels.Contains(item.Model)));
         if (notify)

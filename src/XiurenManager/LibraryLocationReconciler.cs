@@ -33,7 +33,7 @@ internal static class LibraryLocationReconciler
 
         if (changed == 0)
             return 0;
-        state.Database.Save();
+        state.Catalog.ReconcileLocations(state.Database.LocalFiles);
         state.WriteLog($"已同步迁移后的资源路径: {changed} 条");
         if (notify)
             state.NotifyDataChanged();

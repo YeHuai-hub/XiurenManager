@@ -115,6 +115,11 @@ $favorites = @([ordered]@{
 $oldDataRoot = $env:XIUREN_DATA_ROOT
 $env:XIUREN_DATA_ROOT = $dataRoot
 try {
+    $scanProcess = Start-Process `
+        -FilePath $Executable `
+        -ArgumentList @("--scan-local") `
+        -Wait `
+        -PassThru
     $process = Start-Process `
         -FilePath $Executable `
         -ArgumentList @("--migrate-storage-model", "CompleteModel") `
@@ -183,6 +188,15 @@ $loadedFavorites = Get-Content `
 $completeLocal = @($loadedDb.LocalFiles | Where-Object Model -eq "CompleteModel")[0]
 $completeResource = @($loadedDb.Resources | Where-Object Model -eq "CompleteModel")[0]
 $completeFavorite = @($loadedFavorites | Where-Object Model -eq "CompleteModel")[0]
+$loadedLedger = Get-Content `
+    -LiteralPath (Join-Path $dataRoot "data\library-ledger-v1.json") `
+    -Raw `
+    -Encoding UTF8 | ConvertFrom-Json
+$completeLedger = @($loadedLedger.Items | Where-Object Model -eq "CompleteModel")[0]
+$manifestPath = Join-Path $dataRoot (
+    "data\manifests\" + $completeLedger.SetId.Substring(0, 2) + "\" +
+    $completeLedger.SetId + ".json")
+$completeManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $migrationState = Get-Content `
     -LiteralPath (Join-Path $dataRoot "data\storage-migration-state.json") `
     -Raw `
@@ -192,12 +206,18 @@ $result = [ordered]@{
     SourceRemoved = !(Test-Path -LiteralPath (Join-Path $localRoot "TestCategory\CompleteModel"))
     TargetExists = Test-Path -LiteralPath $targetSet
     TargetFileCount = @(Get-ChildItem -LiteralPath $targetSet -File -Recurse).Count
+    TargetMediaCount = @(Get-ChildItem -LiteralPath $targetSet -File -Recurse |
+        Where-Object Extension -in @(".jpg", ".mp4")).Count
     StaleTempRemoved = !(Test-Path -LiteralPath (Join-Path $targetSet "Thumbs.db"))
     AbandonedCopyRemoved = !(Test-Path -LiteralPath (Join-Path $targetSet "abandoned.jpg.copying"))
     DbPathUpdated = [string]$completeLocal.LocalDir -eq $targetSet
     DbTierUpdated = [string]$completeLocal.StorageTier -eq "NAS"
     ResourcePathUpdated = [string]$completeResource.LocalDir -eq $targetSet
     FavoritePathUpdated = [string]$completeFavorite.LocalDir -eq $targetSet
+    LedgerPathUpdated = [string]$completeLedger.LocalDir -eq $targetSet -and
+        [string]$completeLedger.StorageTier -eq "NAS"
+    ManifestPathUpdated = [string]$completeManifest.SourceDirectory -eq $targetSet -and
+        [string]$completeManifest.StorageTier -eq "NAS"
     PartialCleanupRecovered = !(Test-Path -LiteralPath (Split-Path -Parent $recoverySource))
     RecoveryTargetPreserved = (Test-Path -LiteralPath (Join-Path $recoveryTarget "remaining.jpg")) -and
         (Test-Path -LiteralPath (Join-Path $recoveryTarget "already-removed.jpg"))
@@ -211,9 +231,9 @@ $result = [ordered]@{
 $failed = @($result.GetEnumerator() | Where-Object {
     $_.Key -notin @("ExitCode", "TargetFileCount", "TestRoot") -and !$_.Value
 })
-if ($process.ExitCode -ne 0 -or $recoveryProcess.ExitCode -ne 0 -or
+if ($scanProcess.ExitCode -ne 0 -or $process.ExitCode -ne 0 -or $recoveryProcess.ExitCode -ne 0 -or
     $blockedProcess.ExitCode -ne 0 -or
-    $result.TargetFileCount -ne 2 -or $failed.Count -gt 0) {
+    $result.TargetMediaCount -ne 2 -or $failed.Count -gt 0) {
     $result | ConvertTo-Json
     throw "Storage migration integration test failed."
 }

@@ -2,6 +2,7 @@
 /config/
 /data/
 /logs/
+/cache/
 
 # Local downloads and temporary transfer state
 /*.json
