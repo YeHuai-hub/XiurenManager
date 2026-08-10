@@ -26,11 +26,20 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel>
                     <TextBlock Text="重新扫描本地资源" Style="{StaticResource SectionTitleStyle}" />
-                    <TextBlock Text="刷新模特、套图、图片、视频、大小与损坏视频统计。"
+                    <TextBlock Text="刷新媒体统计；空目录可先预览，再分别确认清理本地和 NAS。"
                                Margin="0,6,0,0"
                                Style="{StaticResource SecondaryTextStyle}" />
                 </StackPanel>
-                <ui:Button Grid.Column="1" Content="开始扫描" Icon="{ui:SymbolIcon ArrowSync24}" Click="Scan_OnClick" />
+                <WrapPanel Grid.Column="1" VerticalAlignment="Center">
+                    <ui:Button Content="开始扫描"
+                               Icon="{ui:SymbolIcon ArrowSync24}"
+                               Click="Scan_OnClick" />
+                    <ui:Button x:Name="CleanEmptyDirectoriesButton"
+                               Margin="8,0,0,0"
+                               Content="清理空目录"
+                               Icon="{ui:SymbolIcon Delete24}"
+                               Click="CleanEmptyDirectories_OnClick" />
+                </WrapPanel>
             </Grid>
         </Border>
         <Border Grid.Row="2" Margin="0,12,0,0" Padding="18" CornerRadius="6" Background="{StaticResource SurfaceBrush}">
@@ -41,7 +50,7 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel>
                     <TextBlock Text="删除非图片、非视频文件" Style="{StaticResource SectionTitleStyle}" />
-                    <TextBlock Text="删除 HTML、TXT、URL、残留压缩包等附带文件；保留设置中的图片和视频白名单。"
+                    <TextBlock Text="仅清理已有可用媒体套图中的 HTML、TXT、URL 等附带文件；压缩包和断点文件始终保留。"
                                Margin="0,6,0,0"
                                Style="{StaticResource SecondaryTextStyle}" />
                 </StackPanel>

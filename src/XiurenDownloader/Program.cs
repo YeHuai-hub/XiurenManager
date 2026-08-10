@@ -1893,7 +1893,7 @@ internal sealed class Downloader
             {
                 var duplicateDir = Path.Combine(modelDir, XiurenClient.Safe(item.Title));
                 if (!duplicateDir.Equals(existingDir, StringComparison.OrdinalIgnoreCase))
-                    DeleteIfNoMedia(duplicateDir);
+                    DeleteIfEmpty(duplicateDir);
                 item.LocalDir = existingDir;
                 item.DownloadStatus = "Downloaded";
                 item.ExtractStatus = "Extracted";
@@ -1928,7 +1928,7 @@ internal sealed class Downloader
 
             if (candidateIndex < orderedCandidates.Count - 1)
             {
-                DeleteIfNoMedia(titleDir);
+                DeleteIfEmpty(titleDir);
             }
             else if (HasArchives(titleDir) || HasIncompleteDownloads(titleDir))
             {
@@ -1942,6 +1942,7 @@ internal sealed class Downloader
         if (group.Items.All(item =>
                 item.DownloadStatus.Equals("Unavailable", StringComparison.OrdinalIgnoreCase)))
         {
+            DeleteIfEmpty(titleDir);
             lock (saveGate) db.Save();
             log.Report($"候选组链接均不可用，已跳过: {group.Title} | 候选链接 {group.Items.Count} 个");
             return;
@@ -1972,7 +1973,7 @@ internal sealed class Downloader
         if (settings.SkipCompleted && existingDir != null)
         {
             if (!titleDir.Equals(existingDir, StringComparison.OrdinalIgnoreCase))
-                DeleteIfNoMedia(titleDir);
+                DeleteIfEmpty(titleDir);
             item.LocalDir = existingDir;
             item.DownloadStatus = "Downloaded";
             item.ExtractStatus = "Extracted";
@@ -2721,18 +2722,18 @@ internal sealed class Downloader
 
     private void DeleteIfEmpty(string dir)
     {
-        if (!Directory.Exists(dir)) return;
-        Try(() =>
+        if (!Directory.Exists(dir) || AppPaths.IsInsideTool(dir)) return;
+        try
         {
+            if ((File.GetAttributes(dir) & FileAttributes.ReparsePoint) != 0)
+                return;
             if (!Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Any())
                 Directory.Delete(dir, true);
-        });
-    }
-
-    private void DeleteIfNoMedia(string dir)
-    {
-        if (!Directory.Exists(dir) || HasMedia(dir) || HasIncompleteDownloads(dir) || AppPaths.IsInsideTool(dir)) return;
-        Try(() => Directory.Delete(dir, true));
+        }
+        catch (Exception ex)
+        {
+            log.Report($"空目录清理失败，已保留供维护工具重试: {dir} | {ex.Message}");
+        }
     }
 
     public int CleanDownloadRoot()

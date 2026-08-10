@@ -104,6 +104,7 @@ internal sealed class StorageMigrationService : IDisposable
         var token = activeBatch.Token;
         try
         {
+            using var operationLease = await ResourceOperationLock.AcquireAsync(token);
             processLock = TryAcquireProcessLock();
             if (processLock == null)
             {
@@ -266,6 +267,10 @@ internal sealed class StorageMigrationService : IDisposable
             cancellationToken);
         try
         {
+            using var operationLease = await ResourceOperationLock.AcquireAsync(
+                activeBatch.Token);
+            if (state.Queue.IsRunning)
+                throw new InvalidOperationException("下载队列运行中，指定迁移未启动。");
             processLock = TryAcquireProcessLock();
             if (processLock == null)
             {

@@ -125,7 +125,7 @@ public partial class StatisticsPage : Page
 
     private async void Rescan_OnClick(object sender, RoutedEventArgs e)
     {
-        await Task.Run(() => LocalScanner.Scan(state));
+        await Task.Run(() => LocalScanner.ScanExclusive(state));
         Refresh();
     }
 }

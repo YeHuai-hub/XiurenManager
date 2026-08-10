@@ -36,6 +36,21 @@ if (!$SkipPublish) {
     }
 }
 
+$legacyEntrypoints = @(
+    "XiurenDownloader.exe",
+    "XiurenDownloader.deps.json",
+    "XiurenDownloader.runtimeconfig.json"
+)
+foreach ($name in $legacyEntrypoints) {
+    $path = Join-Path $publish $name
+    if (Test-Path -LiteralPath $path) {
+        Remove-Item -LiteralPath $path -Force
+    }
+}
+if (Test-Path -LiteralPath (Join-Path $publish "XiurenDownloader.exe")) {
+    throw "Legacy XiurenDownloader executable must not be included in the private package."
+}
+
 $compiler = @(
     (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 7\ISCC.exe"),
     "$env:ProgramFiles\Inno Setup 7\ISCC.exe",
@@ -54,7 +69,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "Inno Setup compilation failed with exit code $LASTEXITCODE"
 }
 
-$output = Get-ChildItem -LiteralPath $outputDir -Filter "*Setup-3.7.0.exe" |
+$output = Get-ChildItem -LiteralPath $outputDir -Filter "*Setup-3.7.1.exe" |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
 if (!$output) {

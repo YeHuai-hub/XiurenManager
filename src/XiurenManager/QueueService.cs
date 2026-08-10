@@ -6,6 +6,8 @@ internal sealed class QueueService
 {
     private readonly AppState state;
     private CancellationTokenSource? cancellation;
+    private CancellationTokenSource? operationWaitCancellation;
+    private readonly object operationWaitGate = new();
     private int processing;
     private bool stopRequested;
 
@@ -14,6 +16,20 @@ internal sealed class QueueService
     public QueueService(AppState state)
     {
         this.state = state;
+    }
+
+    public void RecoverInterruptedJobs()
+    {
+        using var operationLease = ResourceOperationLock.TryAcquire();
+        if (operationLease == null)
+        {
+            state.WriteLog("资源库正由其他任务使用，已跳过启动任务恢复。");
+            return;
+        }
+        var latest = Database.Load();
+        state.Database.Resources = latest.Resources;
+        state.Database.Jobs = latest.Jobs;
+        state.Database.LocalFiles = latest.LocalFiles;
         var interrupted = state.Database.Jobs.Where(x =>
             x.Status.Equals("Running", StringComparison.OrdinalIgnoreCase)).ToList();
         foreach (var job in interrupted)
@@ -168,16 +184,33 @@ internal sealed class QueueService
 
     public void Stop()
     {
-        stopRequested = true;
-        cancellation?.Cancel();
+        lock (operationWaitGate)
+        {
+            if (Volatile.Read(ref processing) == 0)
+                return;
+            stopRequested = true;
+            operationWaitCancellation?.Cancel();
+            cancellation?.Cancel();
+        }
         state.WriteLog("正在停止当前任务，未开始的排队任务会保留。");
     }
 
     private async Task RunAsync()
     {
-        if (Interlocked.CompareExchange(ref processing, 1, 0) != 0) return;
+        CancellationTokenSource waitCancellation;
+        lock (operationWaitGate)
+        {
+            if (Volatile.Read(ref processing) != 0)
+                return;
+            Volatile.Write(ref processing, 1);
+            stopRequested = false;
+            waitCancellation = new CancellationTokenSource();
+            operationWaitCancellation = waitCancellation;
+        }
         try
         {
+            using var operationLease = await ResourceOperationLock.AcquireAsync(
+                waitCancellation.Token);
             state.Storage.YieldForDownloads();
             while (state.Storage.IsRunning)
             {
@@ -192,7 +225,13 @@ internal sealed class QueueService
                 var job = state.Database.Jobs.LastOrDefault(IsQueued);
                 if (job == null) break;
 
-                cancellation = new CancellationTokenSource();
+                var jobCancellation = new CancellationTokenSource();
+                lock (operationWaitGate)
+                {
+                    cancellation = jobCancellation;
+                    if (stopRequested)
+                        jobCancellation.Cancel();
+                }
                 job.Status = "Running";
                 job.Stage = "准备";
                 job.ProgressTotal = 0;
@@ -207,7 +246,7 @@ internal sealed class QueueService
 
                 try
                 {
-                    await ExecuteAsync(job, cancellation.Token);
+                    await ExecuteAsync(job, jobCancellation.Token);
                     job.Status = "Done";
                     job.Stage = "";
                 }
@@ -228,16 +267,27 @@ internal sealed class QueueService
                 {
                     job.FinishedAt = DateTime.Now.ToString("s");
                     state.Database.Save();
-                    cancellation.Dispose();
-                    cancellation = null;
+                    lock (operationWaitGate)
+                    {
+                        if (ReferenceEquals(cancellation, jobCancellation))
+                            cancellation = null;
+                        jobCancellation.Dispose();
+                    }
                     state.NotifyJobsChanged();
                 }
             }
         }
         finally
         {
-            Volatile.Write(ref processing, 0);
-            stopRequested = false;
+            lock (operationWaitGate)
+            {
+                if (ReferenceEquals(operationWaitCancellation, waitCancellation))
+                    operationWaitCancellation = null;
+                waitCancellation.Dispose();
+                cancellation = null;
+                stopRequested = false;
+                Volatile.Write(ref processing, 0);
+            }
             state.NotifyJobsChanged();
             state.Storage.TriggerSoon();
         }

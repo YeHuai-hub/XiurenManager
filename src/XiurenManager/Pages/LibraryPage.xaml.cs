@@ -820,7 +820,7 @@ public partial class LibraryPage : Page
             button.IsEnabled = false;
         try
         {
-            await Task.Run(() => LocalScanner.Scan(state));
+            await Task.Run(() => LocalScanner.ScanExclusive(state));
             LoadLibrary();
         }
         finally

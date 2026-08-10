@@ -5,24 +5,40 @@ namespace XiurenManager;
 
 public partial class App : Application
 {
-    internal static AppState State { get; } = new();
+    private static AppState? state;
+    private IDisposable? instanceLease;
+
+    internal static AppState State => state ??
+        throw new InvalidOperationException("应用状态尚未初始化。");
 
     public App()
     {
         DispatcherUnhandledException += (_, e) =>
         {
-            State.WriteLog("界面异常: " + e.Exception);
+            state?.WriteLog("界面异常: " + e.Exception);
             e.Handled = true;
         };
     }
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        base.OnStartup(e);
+        instanceLease = ApplicationInstanceLock.TryAcquire();
+        if (instanceLease == null)
+        {
+            if (e.Args.Length == 0)
+                MessageBox.Show(
+                    "写真资源管理器已经在运行。请先使用现有窗口，或退出后再执行命令行任务。",
+                    "应用已运行");
+            Shutdown(3);
+            return;
+        }
+        state = new AppState();
+
         var viewSetIndex = Array.FindIndex(e.Args, arg =>
             arg.Equals("--view-set", StringComparison.OrdinalIgnoreCase));
         if (viewSetIndex >= 0 && viewSetIndex + 1 < e.Args.Length)
         {
-            base.OnStartup(e);
             var requestedPath = Path.GetFullPath(e.Args[viewSetIndex + 1]);
             var requestedSet = State.Database.LocalFiles.FirstOrDefault(item =>
                 Path.GetFullPath(item.LocalDir)
@@ -53,7 +69,7 @@ public partial class App : Application
 
         if (e.Args.Any(arg => arg.Equals("--scan-local", StringComparison.OrdinalIgnoreCase)))
         {
-            LocalScanner.Scan(State, notify: false);
+            LocalScanner.ScanExclusive(State, notify: false);
             Shutdown(0);
             return;
         }
@@ -68,7 +84,7 @@ public partial class App : Application
                     x.Category.Equals(category, StringComparison.OrdinalIgnoreCase) &&
                     x.Model.Equals(model, StringComparison.OrdinalIgnoreCase))
                 .ToArray();
-            LocalScanner.ScanModels(State, resources, notify: false);
+            LocalScanner.ScanModelsExclusive(State, resources, notify: false);
             Shutdown(0);
             return;
         }
@@ -92,9 +108,16 @@ public partial class App : Application
             return;
         }
 
-        base.OnStartup(e);
+        State.Queue.RecoverInterruptedJobs();
         var window = new MainWindow();
         MainWindow = window;
         window.Show();
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        instanceLease?.Dispose();
+        instanceLease = null;
+        base.OnExit(e);
     }
 }

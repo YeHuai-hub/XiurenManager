@@ -1,5 +1,5 @@
 #define MyAppName "写真资源管理器"
-#define MyAppVersion "3.7.0"
+#define MyAppVersion "3.7.1"
 #define MyAppPublisher "Private Local Tools"
 #define MyAppExeName "XiurenManager.exe"
 #ifndef PublishDir
@@ -12,7 +12,7 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} 私人版 {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-VersionInfoVersion=3.7.0.0
+VersionInfoVersion=3.7.1.0
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
@@ -21,7 +21,7 @@ DefaultDirName=E:\Apps\写真资源管理器
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\artifacts\installer
-OutputBaseFilename=写真资源管理器-私人版-Setup-3.7.0
+OutputBaseFilename=写真资源管理器-私人版-Setup-3.7.1
 SetupIconFile=..\src\XiurenDownloader\Assets\app.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 PrivilegesRequired=lowest
@@ -44,13 +44,18 @@ Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式："
 
 [Files]
-Source: "{#PublishDir}\*"; DestDir: "{app}"; Excludes: "libvlc\win-x86\*,libvlc\win-arm64\*,tools\ffmpeg\*"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PublishDir}\*"; DestDir: "{app}"; Excludes: "XiurenDownloader.exe,XiurenDownloader.deps.json,XiurenDownloader.runtimeconfig.json,libvlc\win-x86\*,libvlc\win-arm64\*,tools\ffmpeg\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\tools\ffmpeg\bin\ffmpeg.exe"; DestDir: "{app}\tools\ffmpeg\bin"; Flags: ignoreversion
 Source: "..\tools\ffmpeg\bin\ffprobe.exe"; DestDir: "{app}\tools\ffmpeg\bin"; Flags: ignoreversion
 Source: "..\tools\ffmpeg\LICENSE"; DestDir: "{app}\tools\ffmpeg"; Flags: ignoreversion
 Source: "..\tools\ffmpeg\README.txt"; DestDir: "{app}\tools\ffmpeg"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
+
+[InstallDelete]
+Type: files; Name: "{app}\XiurenDownloader.exe"
+Type: files; Name: "{app}\XiurenDownloader.deps.json"
+Type: files; Name: "{app}\XiurenDownloader.runtimeconfig.json"
 
 [Registry]
 Root: HKCU; Subkey: "Software\XiurenManager"; ValueType: string; ValueName: "DataRoot"; ValueData: "F:\秀人\_Tool"

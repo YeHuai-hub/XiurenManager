@@ -102,27 +102,125 @@ public partial class ToolsPage : Page
 
     private async void Scan_OnClick(object sender, RoutedEventArgs e)
     {
-        if (state.Storage.IsRunning)
+        if (state.Queue.IsRunning || state.Storage.IsRunning)
         {
-            MessageBox.Show("存储迁移正在运行，请等待当前模特完成或先暂停迁移。");
+            MessageBox.Show("下载队列或存储迁移正在运行，请先停止或等待完成。");
             return;
         }
-        await Task.Run(() => LocalScanner.Scan(state));
+        await Task.Run(() => LocalScanner.ScanExclusive(state));
         MessageBox.Show("本地资源扫描完成。");
     }
 
     private async void Clean_OnClick(object sender, RoutedEventArgs e)
     {
+        if (state.Queue.IsRunning || state.Storage.IsRunning)
+        {
+            MessageBox.Show("下载队列或存储迁移正在运行，请先停止或等待完成。");
+            return;
+        }
         if (MessageBox.Show(
                 "将删除下载目录中所有非图片、非视频文件，并清除空目录。是否继续？",
                 "清理文件",
                 MessageBoxButton.OKCancel,
                 MessageBoxImage.Warning) != MessageBoxResult.OK)
             return;
-        var result = await Task.Run(() => MediaMaintenanceService.CleanNonMedia(state));
-        await Task.Run(() => LocalScanner.Scan(state));
-        state.WriteLog($"清理完成: 删除 {result.Files} 个文件，释放 {result.Bytes / 1024d / 1024d:0.##} MB");
-        MessageBox.Show($"已删除 {result.Files} 个文件。\n释放 {result.Bytes / 1024d / 1024d:0.##} MB。");
+        try
+        {
+            var result = await Task.Run(() => MediaMaintenanceService.CleanNonMedia(state));
+            state.WriteLog($"清理完成: 删除 {result.Files} 个文件，释放 {result.Bytes / 1024d / 1024d:0.##} MB");
+            MessageBox.Show($"已删除 {result.Files} 个文件。\n释放 {result.Bytes / 1024d / 1024d:0.##} MB。");
+        }
+        catch (Exception ex)
+        {
+            state.WriteLog("清理文件失败: " + ex.Message);
+            MessageBox.Show(ex.Message, "清理文件失败");
+        }
+    }
+
+    private async void CleanEmptyDirectories_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (state.Queue.IsRunning || state.Storage.IsRunning)
+        {
+            MessageBox.Show("下载队列或存储迁移正在运行，请先停止或等待完成。");
+            return;
+        }
+
+        CleanEmptyDirectoriesButton.IsEnabled = false;
+        try
+        {
+            var preview = await Task.Run(() =>
+                MediaMaintenanceService.FindEmptySetDirectories(state));
+            var local = preview
+                .Where(x => x.StorageTier == StorageTiers.Local)
+                .ToArray();
+            var archive = preview
+                .Where(x => x.StorageTier == StorageTiers.Archive)
+                .ToArray();
+            if (local.Length == 0 && archive.Length == 0)
+            {
+                MessageBox.Show("没有发现真正的空套图目录。含压缩包、断点文件或其他文件的目录不会列入清理范围。");
+                return;
+            }
+
+            var deleted = 0;
+            var failed = new List<string>();
+            if (local.Length > 0 && MessageBox.Show(
+                    BuildEmptyDirectoryPreview(
+                        "本地",
+                        local,
+                        $"NAS 另有 {archive.Length} 个空目录，本次不会处理。"),
+                    "清理本地空目录",
+                    MessageBoxButton.OKCancel,
+                    MessageBoxImage.Warning) == MessageBoxResult.OK)
+            {
+                var result = await Task.Run(() =>
+                    MediaMaintenanceService.DeleteEmptySetDirectories(state, local));
+                deleted += result.Deleted;
+                failed.AddRange(result.FailedPaths);
+            }
+
+            if (archive.Length > 0 && MessageBox.Show(
+                    BuildEmptyDirectoryPreview(
+                        "NAS",
+                        archive,
+                        "这是独立确认步骤，不会删除任何含文件的目录。"),
+                    "清理 NAS 空目录",
+                    MessageBoxButton.OKCancel,
+                    MessageBoxImage.Warning) == MessageBoxResult.OK)
+            {
+                var result = await Task.Run(() =>
+                    MediaMaintenanceService.DeleteEmptySetDirectories(state, archive));
+                deleted += result.Deleted;
+                failed.AddRange(result.FailedPaths);
+            }
+
+            state.WriteLog($"空目录清理完成: 删除 {deleted} 个，失败或跳过 {failed.Count} 个");
+            MessageBox.Show($"空目录清理完成。\n删除: {deleted}\n失败或因出现文件而跳过: {failed.Count}");
+        }
+        catch (Exception ex)
+        {
+            state.WriteLog("空目录清理失败: " + ex.Message);
+            MessageBox.Show(ex.Message, "空目录清理失败");
+        }
+        finally
+        {
+            CleanEmptyDirectoriesButton.IsEnabled = true;
+        }
+    }
+
+    private static string BuildEmptyDirectoryPreview(
+        string location,
+        IReadOnlyList<EmptySetDirectory> entries,
+        string note)
+    {
+        var paths = string.Join(
+            Environment.NewLine,
+            entries.Take(8).Select(x => "• " + x.Path));
+        var remaining = entries.Count > 8
+            ? $"\n……另有 {entries.Count - 8} 个"
+            : "";
+        return $"发现 {entries.Count} 个{location}空套图目录：\n\n{paths}{remaining}\n\n{note}\n\n" +
+               "删除前会再次检查；只要目录内出现任何文件，就会自动跳过。是否继续？";
     }
 
     private async void CheckVideos_OnClick(object sender, RoutedEventArgs e)
@@ -137,7 +235,6 @@ public partial class ToolsPage : Page
         {
             state.WriteLog("开始检查视频完整性，后台并发 8。");
             var result = await MediaMaintenanceService.CheckVideosAsync(state, CancellationToken.None);
-            await Task.Run(() => LocalScanner.Scan(state));
             state.WriteLog($"视频检查完成: 正常 {result.Valid}，损坏 {result.Invalid}");
             MessageBox.Show($"检查完成。\n正常: {result.Valid}\n损坏: {result.Invalid}");
         }
