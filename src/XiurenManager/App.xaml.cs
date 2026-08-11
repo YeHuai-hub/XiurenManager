@@ -35,7 +35,14 @@ public partial class App : Application
             return;
         }
         state = new AppState();
-        SetMergeService.RecoverPending(state);
+        var mergeRecoveryReady = SetMergeService.RecoverPending(state);
+        if (!mergeRecoveryReady && e.Args.Any(arg =>
+                !arg.Equals("--resume-queue", StringComparison.OrdinalIgnoreCase)))
+        {
+            State.WriteLog("套图合并恢复未完成，已拒绝本次命令行资源操作。");
+            Shutdown(4);
+            return;
+        }
 
         var mergeTestIndex = Array.FindIndex(e.Args, arg =>
             arg.Equals("--merge-sets-test", StringComparison.OrdinalIgnoreCase));
@@ -213,7 +220,10 @@ public partial class App : Application
 
         State.Queue.RecoverInterruptedJobs();
         var resumeQueue = e.Args.Any(arg =>
-            arg.Equals("--resume-queue", StringComparison.OrdinalIgnoreCase));
+            arg.Equals("--resume-queue", StringComparison.OrdinalIgnoreCase)) &&
+                          mergeRecoveryReady;
+        if (!mergeRecoveryReady)
+            State.WriteLog("套图合并恢复未完成，本次不会自动继续下载队列。");
         var window = new MainWindow(resumeQueue);
         MainWindow = window;
         window.Show();

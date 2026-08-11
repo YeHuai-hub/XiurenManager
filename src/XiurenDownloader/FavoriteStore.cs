@@ -215,16 +215,22 @@ internal sealed class FavoriteStore
     {
         lock (FileGate)
         {
+            var existingMerged = Find(merged);
             var sourceEntries = sources
                 .Select(Find)
                 .Where(entry => entry != null)
                 .Cast<FavoriteEntry>()
+                .Where(entry => !ReferenceEquals(entry, existingMerged))
                 .Distinct()
                 .ToArray();
-            if (sourceEntries.Length == 0) return;
+            if (sourceEntries.Length == 0 && existingMerged == null) return;
 
-            var score = sourceEntries.Sum(entry => entry.Score);
-            var tags = NormalizeTags(sourceEntries.SelectMany(entry => entry.Tags));
+            var score = (existingMerged?.Score ?? 0) + sourceEntries.Sum(entry => entry.Score);
+            var tags = NormalizeTags(
+                sourceEntries.SelectMany(entry => entry.Tags)
+                    .Concat(existingMerged?.Tags ?? []));
+            if (existingMerged != null)
+                entries.Remove(existingMerged);
             foreach (var entry in sourceEntries)
                 entries.Remove(entry);
             if (score > 0 || tags.Count > 0)

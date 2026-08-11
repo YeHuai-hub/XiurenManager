@@ -115,15 +115,24 @@ internal static partial class SetMergeService
         }
     }
 
-    public static void RecoverPending(AppState state)
+    public static bool RecoverPending(AppState state)
     {
-        var journal = ReadJournal();
-        if (journal == null) return;
+        SetMergeJournal? journal;
+        try
+        {
+            journal = ReadJournal();
+        }
+        catch (Exception ex)
+        {
+            state.WriteLog("套图合并事务文件已损坏。为保护分卷，已停止自动恢复和下载队列: " + ex.Message);
+            return false;
+        }
+        if (journal == null) return true;
         using var operationLease = ResourceOperationLock.TryAcquire();
         if (operationLease == null)
         {
             state.WriteLog("检测到未完成套图合并，资源库正忙，将在下次启动时恢复。");
-            return;
+            return false;
         }
 
         try
@@ -138,16 +147,26 @@ internal static partial class SetMergeService
                         NormalizePath(journal.Target),
                         StringComparison.OrdinalIgnoreCase) &&
                     !IsMergedHistory(item));
+                var sources = journal.Parts.Select(part => part.Source).ToArray();
                 if (!alreadyCommitted)
                 {
                     if (partDirectories.Any(path => !Directory.Exists(path)))
                         throw new InvalidOperationException("合并目标中的分卷不完整，事务记录已保留。");
-                    var sources = journal.Parts.Select(part => part.Source).ToArray();
                     CommitMergedState(state, sources, journal.Target, partDirectories);
                     state.WriteLog($"已恢复并提交未完成的套图合并: {journal.Target}");
                 }
+                else
+                {
+                    var merged = state.Catalog.Snapshot().First(item =>
+                        NormalizePath(item.LocalDir).Equals(
+                            NormalizePath(journal.Target),
+                            StringComparison.OrdinalIgnoreCase) &&
+                        !IsMergedHistory(item));
+                    RepairCommittedMetadata(state, merged, sources, partDirectories);
+                    state.WriteLog($"已修复未完整落盘的套图合并数据: {journal.Target}");
+                }
                 DeleteJournal();
-                return;
+                return true;
             }
 
             var stagedMoves = journal.Parts
@@ -166,10 +185,12 @@ internal static partial class SetMergeService
                 throw new IOException("部分分卷未恢复到原目录，事务记录已保留以便下次继续恢复。");
             DeleteJournal();
             state.WriteLog("已自动回滚上次未完成的套图合并。");
+            return true;
         }
         catch (Exception ex)
         {
             state.WriteLog("未完成套图合并恢复失败: " + ex.Message);
+            return false;
         }
     }
 
@@ -182,14 +203,7 @@ internal static partial class SetMergeService
         var merged = BuildMergedStat(state, sources, target, partDirectories);
         UpdateResourceLocations(state, sources, partDirectories);
         state.Catalog.MergeSets(sources, merged, partDirectories, MergedReasonPrefix + merged.Title);
-        try
-        {
-            state.Favorites.MergeInto(merged, sources);
-        }
-        catch (Exception ex)
-        {
-            state.WriteLog("合并套图喜爱值同步失败: " + ex.Message);
-        }
+        state.Favorites.MergeInto(merged, sources);
         try
         {
             var mediaFiles = Directory.EnumerateFiles(target, "*", SearchOption.AllDirectories)
@@ -204,6 +218,32 @@ internal static partial class SetMergeService
             state.WriteLog("合并套图清单或资料文件同步失败，将在下次扫描时重建: " + ex.Message);
         }
         return merged;
+    }
+
+    private static void RepairCommittedMetadata(
+        AppState state,
+        LocalStat merged,
+        IReadOnlyList<LocalStat> sources,
+        IReadOnlyList<string> partDirectories)
+    {
+        if (partDirectories.Any(path => !Directory.Exists(path)))
+            throw new DirectoryNotFoundException("合集账本存在，但部分分卷目录缺失，事务记录已保留。");
+        UpdateResourceLocations(state, sources, partDirectories);
+        state.Favorites.MergeInto(merged, sources);
+        state.Database.Save();
+        try
+        {
+            var mediaFiles = Directory.EnumerateFiles(merged.LocalDir, "*", SearchOption.AllDirectories)
+                .Where(path => !AppPaths.IsInsideTool(path))
+                .Select(path => new FileInfo(path))
+                .ToArray();
+            state.Catalog.RecordManifest(merged, mediaFiles);
+            SetMetadataSidecar.Write(state.Database, state.Favorites, merged);
+        }
+        catch (Exception ex)
+        {
+            state.WriteLog("恢复合并后的清单或资料文件失败，将在下次扫描时重建: " + ex.Message);
+        }
     }
 
     private static void ValidateSources(
@@ -410,6 +450,8 @@ internal static partial class SetMergeService
         lock (JournalGate)
         {
             Directory.CreateDirectory(AppPaths.DataDir);
+            if (File.Exists(JournalPath))
+                throw new InvalidOperationException("检测到尚未恢复的套图合并事务，不能开始新的合并。");
             var temp = JournalPath + ".tmp";
             File.WriteAllText(temp, JsonSerializer.Serialize(journal, Settings.JsonOptions), new UTF8Encoding(false));
             File.Move(temp, JournalPath, true);
@@ -429,7 +471,9 @@ internal static partial class SetMergeService
             }
             catch
             {
-                return null;
+                throw new InvalidDataException(
+                    $"无法读取 {JournalPath}，请保留该文件和所有 .merge-* 目录。",
+                    new InvalidDataException("事务 JSON 无效或不完整。"));
             }
         }
     }
