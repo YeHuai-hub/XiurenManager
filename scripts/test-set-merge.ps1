@@ -1,4 +1,7 @@
-param([string]$Executable = "")
+param(
+    [string]$Executable = "",
+    [switch]$KeepTestData
+)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -6,6 +9,7 @@ if (!$Executable) {
     $Executable = Join-Path $root "src\XiurenManager\bin\Debug\net8.0-windows\XiurenManager.exe"
 }
 $base = Join-Path "E:\WorkSpace" ("XiurenMergeTest-" + [Guid]::NewGuid().ToString("N"))
+try {
 $dataRoot = Join-Path $base "_Tool"
 $libraryRoot = Join-Path $base "library"
 $modelRoot = Join-Path $libraryRoot "TestCategory\ModelA"
@@ -284,3 +288,9 @@ if ($merge.ExitCode -ne 0 -or $scan.ExitCode -ne 0 -or
     throw "Set merge integration test failed."
 }
 $result | ConvertTo-Json
+}
+finally {
+    if (!$KeepTestData -and [IO.Directory]::Exists($base)) {
+        [IO.Directory]::Delete($base, $true)
+    }
+}

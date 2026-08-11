@@ -1,5 +1,6 @@
 param(
-    [string]$Executable = ""
+    [string]$Executable = "",
+    [switch]$KeepTestData
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,6 +10,7 @@ if (!$Executable) {
 }
 $base = Join-Path $root ("tmp\storage-test-" + [Guid]::NewGuid().ToString("N"))
 $archiveBase = Join-Path "E:\WorkSpace\XiurenStorageTests" ([Guid]::NewGuid().ToString("N"))
+try {
 $dataRoot = Join-Path $base "data-root"
 $localRoot = Join-Path $base "local"
 $archiveRoot = Join-Path $archiveBase "archive"
@@ -238,3 +240,19 @@ if ($scanProcess.ExitCode -ne 0 -or $process.ExitCode -ne 0 -or $recoveryProcess
     throw "Storage migration integration test failed."
 }
 $result | ConvertTo-Json
+}
+finally {
+    if (!$KeepTestData) {
+        if ([IO.Directory]::Exists($base)) {
+            [IO.Directory]::Delete($base, $true)
+        }
+        if ([IO.Directory]::Exists($archiveBase)) {
+            [IO.Directory]::Delete($archiveBase, $true)
+        }
+        $archiveTestRoot = [IO.Directory]::GetParent($archiveBase).FullName
+        if ([IO.Directory]::Exists($archiveTestRoot) -and
+            [IO.Directory]::GetFileSystemEntries($archiveTestRoot).Length -eq 0) {
+            [IO.Directory]::Delete($archiveTestRoot)
+        }
+    }
+}

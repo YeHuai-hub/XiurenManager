@@ -1,5 +1,6 @@
 param(
-    [string]$Executable = ""
+    [string]$Executable = "",
+    [switch]$KeepTestData
 )
 
 $ErrorActionPreference = "Stop"
@@ -8,6 +9,7 @@ if (!$Executable) {
     $Executable = Join-Path $root "src\XiurenManager\bin\Debug\net8.0-windows\XiurenManager.exe"
 }
 $base = Join-Path "E:\WorkSpace" ("XiurenCatalogTest-" + [Guid]::NewGuid().ToString("N"))
+try {
 $dataRoot = Join-Path $base "_Tool"
 $libraryRoot = Join-Path $base "library"
 $presentSet = Join-Path $libraryRoot "TestCategory\ModelA\SetPresent"
@@ -219,3 +221,9 @@ if ($first.ExitCode -ne 0 -or $second.ExitCode -ne 0 -or $third.ExitCode -ne 0 -
     throw "Library catalog integration test failed."
 }
 $result | ConvertTo-Json
+}
+finally {
+    if (!$KeepTestData -and [IO.Directory]::Exists($base)) {
+        [IO.Directory]::Delete($base, $true)
+    }
+}
