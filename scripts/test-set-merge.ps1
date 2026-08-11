@@ -187,17 +187,27 @@ try {
         Target = (Join-Path $modelRoot "Recovery Never Created")
         Staging = $recoveryStaging
         CreatedAt = (Get-Date).ToString("s")
-        Parts = @([ordered]@{
-            Source = $ledgerSource
-            OriginalDirectory = $ledgerOne
-            ChildName = "01 - Ledger Part - 1"
-        })
+        Parts = @(
+            [ordered]@{
+                Source = $ledgerSource
+                OriginalDirectory = $ledgerOne
+                ChildName = "01 - Ledger Part - 1"
+            },
+            [ordered]@{
+                Source = @($localFiles | Where-Object Title -eq "Ledger Part - 2")[0]
+                OriginalDirectory = $ledgerTwo
+                ChildName = "02 - Ledger Part - 2"
+            }
+        )
     }) | ConvertTo-Json -Depth 20 |
         Set-Content -LiteralPath (Join-Path $dataRoot "data\set-merge-transaction.json") -Encoding UTF8
     $scan = Start-Process -FilePath $Executable -ArgumentList "--scan-local" -Wait -PassThru
     "{invalid" | Set-Content -LiteralPath (Join-Path $dataRoot "data\set-merge-transaction.json") -Encoding ASCII
     $corruptJournalScan = Start-Process -FilePath $Executable -ArgumentList "--scan-local" -Wait -PassThru
     $corruptJournalPreserved = Test-Path (Join-Path $dataRoot "data\set-merge-transaction.json")
+    "{}" | Set-Content -LiteralPath (Join-Path $dataRoot "data\set-merge-transaction.json") -Encoding ASCII
+    $semanticJournalScan = Start-Process -FilePath $Executable -ArgumentList "--scan-local" -Wait -PassThru
+    $semanticJournalPreserved = Test-Path (Join-Path $dataRoot "data\set-merge-transaction.json")
     Remove-Item -LiteralPath (Join-Path $dataRoot "data\set-merge-transaction.json") -Force
 }
 finally {
@@ -229,6 +239,7 @@ $result = [ordered]@{
     ResourceConflictExitCode = $resourceConflictMerge.ExitCode
     FavoriteConflictExitCode = $favoriteConflictMerge.ExitCode
     CorruptJournalExitCode = $corruptJournalScan.ExitCode
+    SemanticJournalExitCode = $semanticJournalScan.ExitCode
     CommittedRecoveryExitCode = $committedRecovery.ExitCode
     OrderedPartsPreserved = (@(Compare-Object $expectedParts $actualParts).Count -eq 0)
     DuplicateNamesPreserved = $duplicates.Count -eq 0
@@ -253,18 +264,20 @@ $result = [ordered]@{
         !(Test-Path $recoveryStaging) -and
         !(Test-Path (Join-Path $dataRoot "data\set-merge-transaction.json"))
     CorruptJournalFailsClosed = $corruptJournalScan.ExitCode -eq 4 -and $corruptJournalPreserved
+    SemanticJournalFailsClosed = $semanticJournalScan.ExitCode -eq 4 -and $semanticJournalPreserved
     CommittedMetadataRecovered = $committedRecoveryRepaired
     TestRoot = $base
 }
 $failed = @($result.GetEnumerator() | Where-Object {
     $_.Key -notin @("MergeExitCode", "ScanExitCode", "ConflictExitCode", "LedgerConflictExitCode",
         "ResourceConflictExitCode", "FavoriteConflictExitCode", "CorruptJournalExitCode",
-        "CommittedRecoveryExitCode", "TestRoot") -and !$_.Value
+        "SemanticJournalExitCode", "CommittedRecoveryExitCode", "TestRoot") -and !$_.Value
 })
 if ($merge.ExitCode -ne 0 -or $scan.ExitCode -ne 0 -or
     $conflictMerge.ExitCode -ne 2 -or $ledgerConflictMerge.ExitCode -ne 2 -or
     $resourceConflictMerge.ExitCode -ne 2 -or $favoriteConflictMerge.ExitCode -ne 2 -or
     $corruptJournalScan.ExitCode -ne 4 -or
+    $semanticJournalScan.ExitCode -ne 4 -or
     $committedRecovery.ExitCode -ne 0 -or
     $failed.Count -gt 0) {
     $result | ConvertTo-Json

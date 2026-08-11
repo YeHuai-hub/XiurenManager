@@ -465,15 +465,39 @@ internal static partial class SetMergeService
             if (!File.Exists(JournalPath)) return null;
             try
             {
-                return JsonSerializer.Deserialize<SetMergeJournal>(
+                var journal = JsonSerializer.Deserialize<SetMergeJournal>(
                     File.ReadAllText(JournalPath, Encoding.UTF8),
                     Settings.JsonOptions);
+                if (journal == null ||
+                    !journal.Schema.Equals("xiuren-set-merge/v1", StringComparison.Ordinal) ||
+                    string.IsNullOrWhiteSpace(journal.Target) ||
+                    string.IsNullOrWhiteSpace(journal.Staging) ||
+                    !Path.IsPathFullyQualified(journal.Target) ||
+                    !Path.IsPathFullyQualified(journal.Staging) ||
+                    PathsEqual(journal.Target, journal.Staging) ||
+                    journal.Parts == null ||
+                    journal.Parts.Count < 2 ||
+                    journal.Parts.Any(part =>
+                        part == null ||
+                        part.Source == null ||
+                        string.IsNullOrWhiteSpace(part.OriginalDirectory) ||
+                        !Path.IsPathFullyQualified(part.OriginalDirectory) ||
+                        string.IsNullOrWhiteSpace(part.ChildName) ||
+                        !Path.GetFileName(part.ChildName).Equals(
+                            part.ChildName,
+                            StringComparison.Ordinal)) ||
+                    journal.Parts.Select(part => NormalizePath(part.OriginalDirectory))
+                        .Distinct(StringComparer.OrdinalIgnoreCase).Count() != journal.Parts.Count ||
+                    journal.Parts.Select(part => part.ChildName)
+                        .Distinct(StringComparer.OrdinalIgnoreCase).Count() != journal.Parts.Count)
+                    throw new InvalidDataException("事务字段缺失、路径无效或分卷记录重复。");
+                return journal;
             }
-            catch
+            catch (Exception ex)
             {
                 throw new InvalidDataException(
                     $"无法读取 {JournalPath}，请保留该文件和所有 .merge-* 目录。",
-                    new InvalidDataException("事务 JSON 无效或不完整。"));
+                    ex);
             }
         }
     }
