@@ -18,7 +18,6 @@ $script = Join-Path $root "installer\XiurenManager.Private.iss"
 $outputDir = Join-Path $root "artifacts\installer"
 
 if (!$SkipPublish) {
-    Get-Process XiurenManager -ErrorAction SilentlyContinue | Stop-Process -Force
     $fullRoot = [IO.Path]::GetFullPath($root).TrimEnd('\')
     $fullPublish = [IO.Path]::GetFullPath($publish).TrimEnd('\')
     $fullBuildRoot = [IO.Path]::GetFullPath($buildRoot).TrimEnd('\')
