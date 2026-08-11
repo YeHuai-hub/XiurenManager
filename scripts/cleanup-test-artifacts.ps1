@@ -9,7 +9,7 @@ if (![IO.Directory]::Exists($root)) {
     throw "工作目录不存在: $root"
 }
 
-$namePattern = '^Xiuren(CatalogTest|MergeTest|StorageTests$|Manager-(build|empty-test|final-safety|render-test|video-test))'
+$namePattern = '^Xiuren(CatalogTest|DatabaseTest|MergeTest|StorageTests$|Manager-(build|empty-test|final-safety|render-test|video-test))'
 $targets = @(Get-ChildItem -LiteralPath $root -Directory | Where-Object {
     $_.Name -match $namePattern
 })

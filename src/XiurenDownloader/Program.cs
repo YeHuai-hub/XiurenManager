@@ -802,6 +802,7 @@ internal sealed class Settings
 internal sealed class Database
 {
     private static readonly object SaveGate = new();
+    private static string LastGoodFile => AppPaths.DbFile + ".last-good";
     public List<ResourceItem> Resources { get; set; } = [];
     public List<JobItem> Jobs { get; set; } = [];
     public List<LocalStat> LocalFiles { get; set; } = [];
@@ -809,9 +810,38 @@ internal sealed class Database
     public static Database Load()
     {
         AppPaths.Ensure();
-        if (!File.Exists(AppPaths.DbFile)) return new Database();
+        if (!File.Exists(AppPaths.DbFile))
+            return File.Exists(LastGoodFile) ? ReadAndNormalize(LastGoodFile) : new Database();
+        try
+        {
+            return ReadAndNormalize(AppPaths.DbFile);
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or NotSupportedException)
+        {
+            if (!File.Exists(LastGoodFile))
+                throw new InvalidDataException(
+                    "数据库损坏，且没有可自动恢复的 last-good 副本。", ex);
+
+            var recovered = ReadAndNormalize(LastGoodFile);
+            var backupDir = Path.Combine(AppPaths.DataDir, "backups");
+            Directory.CreateDirectory(backupDir);
+            var damaged = Path.Combine(
+                backupDir,
+                "xiuren.db.startup-corrupt-" + DateTime.Now.ToString("yyyyMMdd-HHmmss"));
+            File.Copy(AppPaths.DbFile, damaged, true);
+            DurableCopy(LastGoodFile, AppPaths.DbFile);
+            File.WriteAllText(
+                Path.Combine(AppPaths.DataDir, "database-recovery-latest.txt"),
+                $"{DateTime.Now:s} 已从 xiuren.db.last-good 自动恢复。损坏文件: {damaged}",
+                Encoding.UTF8);
+            return recovered;
+        }
+    }
+
+    private static Database ReadAndNormalize(string path)
+    {
         var database = JsonSerializer.Deserialize<Database>(
-            File.ReadAllText(AppPaths.DbFile, Encoding.UTF8),
+            File.ReadAllText(path, Encoding.UTF8),
             Settings.JsonOptions) ?? new Database();
         foreach (var item in database.Resources)
         {
@@ -831,12 +861,48 @@ internal sealed class Database
         lock (SaveGate)
         {
             var temp = AppPaths.DbFile + ".tmp";
-            File.WriteAllText(
-                temp,
-                JsonSerializer.Serialize(this, Settings.JsonOptions),
-                Encoding.UTF8);
-            File.Move(temp, AppPaths.DbFile, true);
+            try
+            {
+                DurableWrite(temp, JsonSerializer.Serialize(this, Settings.JsonOptions));
+                if (File.Exists(AppPaths.DbFile))
+                    File.Replace(temp, AppPaths.DbFile, LastGoodFile, true);
+                else
+                    File.Move(temp, AppPaths.DbFile);
+            }
+            finally
+            {
+                try { if (File.Exists(temp)) File.Delete(temp); } catch { }
+            }
         }
+    }
+
+    private static void DurableCopy(string source, string destination)
+    {
+        var temp = destination + ".recovery.tmp";
+        try
+        {
+            DurableWrite(temp, File.ReadAllText(source, Encoding.UTF8));
+            File.Move(temp, destination, true);
+        }
+        finally
+        {
+            try { if (File.Exists(temp)) File.Delete(temp); } catch { }
+        }
+    }
+
+    private static void DurableWrite(string path, string content)
+    {
+        using var stream = new FileStream(
+            path,
+            FileMode.Create,
+            FileAccess.Write,
+            FileShare.None,
+            64 * 1024,
+            FileOptions.WriteThrough);
+        using var writer = new StreamWriter(stream, new UTF8Encoding(false), 64 * 1024, leaveOpen: true);
+        writer.Write(content);
+        writer.Flush();
+        stream.Flush(flushToDisk: true);
     }
 
     public ResourceItem Upsert(ResourceItem item)

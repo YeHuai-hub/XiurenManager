@@ -16,7 +16,19 @@ public partial class App : Application
     {
         DispatcherUnhandledException += (_, e) =>
         {
-            state?.WriteLog("界面异常: " + e.Exception);
+            if (state == null)
+            {
+                MessageBox.Show(
+                    "写真资源管理器启动失败。\n\n" + e.Exception.Message,
+                    "启动失败",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                Shutdown(5);
+            }
+            else
+            {
+                state.WriteLog("界面异常: " + e.Exception);
+            }
             e.Handled = true;
         };
     }
@@ -34,7 +46,25 @@ public partial class App : Application
             Shutdown(3);
             return;
         }
-        state = new AppState();
+        try
+        {
+            state = new AppState();
+        }
+        catch (Exception ex)
+        {
+            instanceLease.Dispose();
+            instanceLease = null;
+            if (e.Args.Length == 0)
+            {
+                MessageBox.Show(
+                    "写真资源管理器启动失败，程序没有在后台继续运行。\n\n" + ex.Message,
+                    "启动失败",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            Shutdown(5);
+            return;
+        }
         var mergeRecoveryReady = SetMergeService.RecoverPending(state);
         if (!mergeRecoveryReady && e.Args.Any(arg =>
                 !arg.Equals("--resume-queue", StringComparison.OrdinalIgnoreCase)))
