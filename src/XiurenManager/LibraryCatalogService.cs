@@ -305,8 +305,6 @@ internal sealed class LibraryCatalogService : IDisposable
         Interlocked.Increment(ref urgentCoverRequests);
         try
         {
-            using var operationLease = await ResourceOperationLock.AcquireAsync(token)
-                .ConfigureAwait(false);
             await MediaCoverService.CreatePersistentCoverAsync(
                 source,
                 CoverPath(item.SetId),

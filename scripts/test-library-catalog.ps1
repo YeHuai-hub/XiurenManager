@@ -102,14 +102,32 @@ $ids = @($ledger.Items | ForEach-Object SetId)
 
 Remove-Item -LiteralPath $coverPath -Force -ErrorAction SilentlyContinue
 $env:XIUREN_DATA_ROOT = $dataRoot
+$resourceLock = $null
+$warmCoverCompletedWhileLocked = $false
 try {
-    $warmCover = Start-Process -FilePath $Executable -ArgumentList @("--warm-cover", $presentSet) -Wait -PassThru
+    $resourceLockPath = Join-Path $dataRoot "data\resource-operation.lock"
+    $resourceLock = [System.IO.File]::Open(
+        $resourceLockPath,
+        [System.IO.FileMode]::OpenOrCreate,
+        [System.IO.FileAccess]::ReadWrite,
+        [System.IO.FileShare]::None)
+    $warmCover = Start-Process -FilePath $Executable -ArgumentList @("--warm-cover", $presentSet) -PassThru
+    $warmCoverCompletedWhileLocked = $warmCover.WaitForExit(15000)
+    if (!$warmCoverCompletedWhileLocked) {
+        Stop-Process -Id $warmCover.Id -Force -ErrorAction SilentlyContinue
+        throw "Visible cover generation waited for the resource mutation lock."
+    }
+    $resourceLock.Dispose()
+    $resourceLock = $null
     $warmViewer = Start-Process -FilePath $Executable -ArgumentList @(
         "--warm-viewer-image",
         (Join-Path $presentSet "cover.jpg")
     ) -Wait -PassThru
 }
 finally {
+    if ($null -ne $resourceLock) {
+        $resourceLock.Dispose()
+    }
     $env:XIUREN_DATA_ROOT = $oldDataRoot
 }
 
@@ -165,6 +183,7 @@ $result = [ordered]@{
     VisibleCoverCreatedOnDemand = $warmCover.ExitCode -eq 0 -and
         (Test-Path -LiteralPath $coverPath) -and
         (Get-Item -LiteralPath $coverPath).Length -gt 0
+    VisibleCoverDoesNotWaitForResourceMutationLock = $warmCoverCompletedWhileLocked
     ViewerImageCacheReused = $warmViewer.ExitCode -eq 0
     MissingHistoryPreserved = [string]$missing.Availability -eq "Missing" -and
         [int]$missing.ImageCount -eq 12 -and [int]$missing.VideoCount -eq 1
