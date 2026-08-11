@@ -76,8 +76,7 @@ if (!$output) {
 }
 
 $hash = (Get-FileHash -LiteralPath $output.FullName -Algorithm SHA256).Hash
-$manifest = "$hash *$($output.Name)"
-Set-Content -LiteralPath ($output.FullName + ".sha256") -Value $manifest -Encoding ASCII
+Set-Content -LiteralPath ($output.FullName + ".sha256") -Value $hash -Encoding ASCII
 
 Get-Item -LiteralPath $output.FullName | Select-Object FullName, Length, LastWriteTime
 Write-Host "SHA256: $hash"
