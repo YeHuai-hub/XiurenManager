@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Text.Json;
 using XiurenDownloader;
 
 namespace XiurenManager;
@@ -34,6 +35,36 @@ public partial class App : Application
             return;
         }
         state = new AppState();
+        SetMergeService.RecoverPending(state);
+
+        var mergeTestIndex = Array.FindIndex(e.Args, arg =>
+            arg.Equals("--merge-sets-test", StringComparison.OrdinalIgnoreCase));
+        if (mergeTestIndex >= 0 && mergeTestIndex + 1 < e.Args.Length)
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            try
+            {
+                var request = JsonSerializer.Deserialize<SetMergeCommand>(
+                    File.ReadAllText(e.Args[mergeTestIndex + 1]),
+                    Settings.JsonOptions) ?? throw new InvalidOperationException("合并测试请求无效。");
+                var requestedPaths = request.SourceDirectories
+                    .Select(Path.GetFullPath)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var sources = State.Catalog.Snapshot()
+                    .Where(item => requestedPaths.Contains(Path.GetFullPath(item.LocalDir)))
+                    .ToArray();
+                if (sources.Length != requestedPaths.Count)
+                    throw new InvalidOperationException("合并测试请求中的部分目录未被账本识别。");
+                SetMergeService.Merge(State, SetMergeService.AutoOrder(sources), request.Title);
+                Shutdown(0);
+            }
+            catch (Exception ex)
+            {
+                State.WriteLog("合并测试失败: " + ex);
+                Shutdown(2);
+            }
+            return;
+        }
 
         if (e.Args.Any(arg =>
                 arg.Equals("--migrate-catalog", StringComparison.OrdinalIgnoreCase)))

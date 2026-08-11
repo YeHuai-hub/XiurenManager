@@ -70,6 +70,7 @@ public partial class StatisticsPage : Page
         var selected = (ModelGrid.SelectedItem as StatisticsModelRow)?.Key;
         models.Clear();
         foreach (var group in state.Database.LocalFiles
+                     .Where(x => !SetMergeService.IsMergedHistory(x))
                      .Where(x => Directory.Exists(x.LocalDir))
                      .GroupBy(x => new { x.Category, x.Model })
                      .Select(g => new StatisticsModelRow
@@ -87,14 +88,15 @@ public partial class StatisticsPage : Page
             x.Key.Equals(selected, StringComparison.OrdinalIgnoreCase));
         ModelGrid.SelectedIndex = index >= 0 ? index : models.Count > 0 ? 0 : -1;
         var categoryCount = state.Database.LocalFiles
+            .Where(x => !SetMergeService.IsMergedHistory(x))
             .Select(x => x.Category)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Count();
         StatisticsSummary.Text =
             $"{categoryCount} 个分类 · {models.Count} 个人物 · " +
-            $"{state.Database.LocalFiles.Count} 套 · " +
-            $"{state.Database.LocalFiles.Sum(x => x.ImageCount):N0} 张图片  ·  " +
-            $"{state.Database.LocalFiles.Sum(x => x.VideoCount):N0} 个视频";
+            $"{state.Database.LocalFiles.Count(x => !SetMergeService.IsMergedHistory(x))} 套 · " +
+            $"{state.Database.LocalFiles.Where(x => !SetMergeService.IsMergedHistory(x)).Sum(x => x.ImageCount):N0} 张图片  ·  " +
+            $"{state.Database.LocalFiles.Where(x => !SetMergeService.IsMergedHistory(x)).Sum(x => x.VideoCount):N0} 个视频";
     }
 
     private void ModelGrid_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -102,6 +104,7 @@ public partial class StatisticsPage : Page
         sets.Clear();
         if (ModelGrid.SelectedItem is not StatisticsModelRow model) return;
         foreach (var item in state.Database.LocalFiles
+                     .Where(x => !SetMergeService.IsMergedHistory(x))
                      .Where(x => x.Category.Equals(
                          model.Category,
                          StringComparison.OrdinalIgnoreCase))

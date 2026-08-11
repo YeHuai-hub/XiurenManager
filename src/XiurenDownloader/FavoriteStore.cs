@@ -211,6 +211,56 @@ internal sealed class FavoriteStore
         }
     }
 
+    public void MergeInto(LocalStat merged, IEnumerable<LocalStat> sources)
+    {
+        lock (FileGate)
+        {
+            var sourceEntries = sources
+                .Select(Find)
+                .Where(entry => entry != null)
+                .Cast<FavoriteEntry>()
+                .Distinct()
+                .ToArray();
+            if (sourceEntries.Length == 0) return;
+
+            var score = sourceEntries.Sum(entry => entry.Score);
+            var tags = NormalizeTags(sourceEntries.SelectMany(entry => entry.Tags));
+            foreach (var entry in sourceEntries)
+                entries.Remove(entry);
+            if (score > 0 || tags.Count > 0)
+            {
+                entries.Add(new FavoriteEntry
+                {
+                    SetId = merged.SetId,
+                    LocalDir = NormalizePath(merged.LocalDir),
+                    Model = merged.Model,
+                    Title = merged.Title,
+                    Score = score,
+                    Tags = tags,
+                    UpdatedAt = DateTime.Now.ToString("s")
+                });
+            }
+            Save();
+        }
+    }
+
+    public bool HasTitleConflict(LocalStat target, IEnumerable<LocalStat> sources)
+    {
+        lock (FileGate)
+        {
+            var sourceIds = sources.Select(item => item.SetId)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var sourcePaths = sources.Select(item => NormalizePath(item.LocalDir))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return entries.Any(entry =>
+                entry.Model.Equals(target.Model, StringComparison.OrdinalIgnoreCase) &&
+                entry.Title.Equals(target.Title, StringComparison.OrdinalIgnoreCase) &&
+                !sourceIds.Contains(entry.SetId) &&
+                !sourcePaths.Contains(NormalizePath(entry.LocalDir)));
+        }
+    }
+
     private FavoriteEntry? Find(LocalStat item)
     {
         if (!string.IsNullOrWhiteSpace(item.SetId))

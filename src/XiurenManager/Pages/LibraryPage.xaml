@@ -67,6 +67,12 @@
                               Content="只看喜欢"
                               Checked="FavoriteOnly_OnChanged"
                               Unchecked="FavoriteOnly_OnChanged" />
+                <ui:Button x:Name="MergeSelectedButton"
+                           Margin="10,0,0,0"
+                           Content="合并"
+                           Icon="{ui:SymbolIcon FolderArrowRight24}"
+                           IsEnabled="False"
+                           Click="MergeSelected_OnClick" />
                 <ui:Button Margin="10,0,0,0"
                            Content="重新扫描"
                            Icon="{ui:SymbolIcon ArrowSync24}"
@@ -283,6 +289,17 @@
                                                 </ContextMenu>
                                             </ui:Button.ContextMenu>
                                         </ui:Button>
+                                        <CheckBox Width="28"
+                                                  Height="28"
+                                                  Margin="8"
+                                                  Padding="5"
+                                                  HorizontalAlignment="Right"
+                                                  VerticalAlignment="Top"
+                                                  Panel.ZIndex="6"
+                                                  ToolTip="选择用于合并"
+                                                  IsChecked="{Binding IsMergeSelected, Mode=TwoWay}"
+                                                  Checked="MergeSelection_OnChanged"
+                                                  Unchecked="MergeSelection_OnChanged" />
                                     </Grid>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>

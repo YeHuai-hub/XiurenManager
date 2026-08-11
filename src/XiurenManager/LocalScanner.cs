@@ -543,7 +543,8 @@ internal static class LocalScanner
         HashSet<string>? failedDirectories = null)
     {
         foreach (var setDir in Directory.EnumerateDirectories(modelDir)
-                     .Where(x => !AppPaths.IsInsideTool(x)))
+                     .Where(x => !AppPaths.IsInsideTool(x))
+                     .Where(x => !Path.GetFileName(x).StartsWith('.')))
         {
             token.ThrowIfCancellationRequested();
             try

@@ -39,6 +39,7 @@ internal sealed class SetManifestDocument
     public string ExtractPassword { get; set; } = "";
     public string VerifiedAt { get; set; } = "";
     public List<SetManifestFile> Files { get; set; } = [];
+    public List<MergedPartInfo> MergedParts { get; set; } = [];
 }
 
 internal sealed class SetManifestFile
@@ -190,7 +191,13 @@ internal sealed class LibraryCatalogService : IDisposable
     {
         EnsureSetId(item);
         SourceMetadataIndex index;
-        lock (gate) index = sourceMetadataIndex;
+        lock (gate)
+        {
+            index = sourceMetadataIndex;
+            var existing = FindEntryLocked(item);
+            if (existing != null && existing.MergedParts.Count > 0)
+                item.MergedParts = CloneMergedParts(existing.MergedParts);
+        }
         EnrichSourceMetadata(item, index);
         SetManifestDocument manifest;
         lock (ManifestGate(item.SetId))
@@ -444,6 +451,60 @@ internal sealed class LibraryCatalogService : IDisposable
             }
             SaveLedgerLocked();
             SyncDatabaseLocked(save: true);
+        }
+    }
+
+    public void MergeSets(
+        IReadOnlyList<LocalStat> sources,
+        LocalStat merged,
+        IReadOnlyList<string> partDirectories,
+        string reason)
+    {
+        if (sources.Count != partDirectories.Count)
+            throw new ArgumentException("合并来源与分卷目录数量不一致。");
+        EnsureExpectedCounts(merged);
+        merged.SetId = NewSetId();
+        if (string.IsNullOrWhiteSpace(merged.Availability))
+            merged.Availability = CatalogStatuses.Available;
+        merged.MissingSince = "";
+        merged.LastVerified = DateTime.Now.ToString("s");
+        if (merged.Availability.Equals(CatalogStatuses.Available, StringComparison.OrdinalIgnoreCase))
+            merged.LastComplete = merged.LastVerified;
+
+        lock (gate)
+        {
+            for (var index = 0; index < sources.Count; index++)
+            {
+                var existing = FindEntryLocked(sources[index]);
+                if (existing == null) continue;
+                existing.LocalDir = partDirectories[index];
+                existing.StorageTier = DetectStorageTier(existing.LocalDir);
+                SetUnavailable(existing, CatalogStatuses.Deleted, reason, merged.LastVerified);
+                CopyCatalogFields(sources[index], existing);
+            }
+            entries.Add(Clone(merged));
+            SaveLedgerLocked();
+            SyncDatabaseLocked(save: true);
+        }
+        foreach (var source in sources)
+        {
+            try { UpdateManifestLocation(source); }
+            catch (Exception ex) { state.WriteLog($"合并后分卷清单更新失败: {source.Title} | {ex.Message}"); }
+        }
+        try
+        {
+            var firstCover = sources.Select(source => CoverPath(source.SetId))
+                .FirstOrDefault(File.Exists);
+            if (!string.IsNullOrWhiteSpace(firstCover))
+            {
+                var targetCover = CoverPath(merged.SetId);
+                Directory.CreateDirectory(Path.GetDirectoryName(targetCover)!);
+                File.Copy(firstCover, targetCover, true);
+            }
+        }
+        catch (Exception ex)
+        {
+            state.WriteLog("合并套图封面继承失败，将在打开媒体库时重新生成: " + ex.Message);
         }
     }
 
@@ -835,7 +896,8 @@ internal sealed class LibraryCatalogService : IDisposable
             PanUrl = item.PanUrl,
             PanPassword = item.PanPassword,
             ExtractPassword = item.ExtractPassword,
-            VerifiedAt = DateTime.Now.ToString("s")
+            VerifiedAt = DateTime.Now.ToString("s"),
+            MergedParts = CloneMergedParts(item.MergedParts)
         };
         foreach (var file in files)
         {
@@ -1026,6 +1088,7 @@ internal sealed class LibraryCatalogService : IDisposable
         target.LastVerified = source.LastVerified;
         target.LastComplete = source.LastComplete;
         target.MissingSince = source.MissingSince;
+        target.MergedParts = CloneMergedParts(source.MergedParts);
     }
 
     private static LocalStat Clone(LocalStat item) => new()
@@ -1053,8 +1116,21 @@ internal sealed class LibraryCatalogService : IDisposable
         AvailabilityReason = item.AvailabilityReason,
         LastVerified = item.LastVerified,
         LastComplete = item.LastComplete,
-        MissingSince = item.MissingSince
+        MissingSince = item.MissingSince,
+        MergedParts = CloneMergedParts(item.MergedParts)
     };
+
+    private static List<MergedPartInfo> CloneMergedParts(IEnumerable<MergedPartInfo>? parts) =>
+        (parts ?? []).Select(part => new MergedPartInfo
+        {
+            SourceSetId = part.SourceSetId,
+            Title = part.Title,
+            RelativeDirectory = part.RelativeDirectory,
+            SourceUrl = part.SourceUrl,
+            PanUrl = part.PanUrl,
+            PanPassword = part.PanPassword,
+            ExtractPassword = part.ExtractPassword
+        }).ToList();
 
     private static void EnsureExpectedCounts(LocalStat item)
     {

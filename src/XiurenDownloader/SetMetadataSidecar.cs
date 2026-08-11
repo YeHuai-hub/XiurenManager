@@ -154,6 +154,8 @@ internal static class SetMetadataSidecar
         Row(builder, "总大小", FormatBytes(item.TotalBytes));
         Row(builder, "喜爱值", Math.Max(0, score).ToString());
         Row(builder, "标签", tags.Count == 0 ? "暂无" : string.Join("、", tags));
+        if (item.MergedParts.Count > 0)
+            Row(builder, "分卷", item.MergedParts.Count.ToString("N0"));
         builder.AppendLine();
         builder.AppendLine("## 来源与密码");
         builder.AppendLine();
@@ -167,6 +169,28 @@ internal static class SetMetadataSidecar
         {
             builder.AppendLine();
             builder.AppendLine("> 当前本地套图没有可靠匹配的来源记录，因此网址和密码保持为空。");
+        }
+        if (item.MergedParts.Count > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("## 合并分卷");
+            builder.AppendLine();
+            builder.AppendLine("分卷按下列顺序保留为独立子目录，原始来源信息不会合并覆盖。");
+            for (var index = 0; index < item.MergedParts.Count; index++)
+            {
+                var part = item.MergedParts[index];
+                builder.AppendLine();
+                builder.AppendLine($"### {index + 1:00} · {part.Title}");
+                builder.AppendLine();
+                builder.AppendLine("| 项目 | 内容 |");
+                builder.AppendLine("| --- | --- |");
+                Row(builder, "子目录", part.RelativeDirectory);
+                Row(builder, "原套图 ID", part.SourceSetId);
+                Row(builder, "网站详情页", Link(part.SourceUrl));
+                Row(builder, "百度网盘", Link(part.PanUrl));
+                Row(builder, "网盘提取码", part.PanPassword);
+                Row(builder, "压缩包解压密码", part.ExtractPassword);
+            }
         }
         return builder.ToString().Replace("\r\n", "\n").Replace("\n", Environment.NewLine);
     }

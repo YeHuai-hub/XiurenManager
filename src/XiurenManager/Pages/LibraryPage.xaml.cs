@@ -26,6 +26,7 @@ internal sealed class SetCardRow : INotifyPropertyChanged
 {
     private ImageSource? cover;
     private string placeholder = "等待本地封面";
+    private bool isMergeSelected;
 
     public LocalStat Item { get; init; } = new();
     public int Score { get; init; }
@@ -38,6 +39,17 @@ internal sealed class SetCardRow : INotifyPropertyChanged
         ? $"{Item.ImageCount} 图  {Item.VideoCount + Item.InvalidVideoCount} 视"
         : $"{Item.ImageCount} 张";
     public string SizeLabel => $"{Item.StorageTier} · {StatusLabel(Item)} · {FormatBytes(Item.TotalBytes)}";
+
+    public bool IsMergeSelected
+    {
+        get => isMergeSelected;
+        set
+        {
+            if (isMergeSelected == value) return;
+            isMergeSelected = value;
+            OnPropertyChanged();
+        }
+    }
 
     public ImageSource? Cover
     {
@@ -114,12 +126,14 @@ public partial class LibraryPage : Page
     private int cardColumns;
     private CancellationTokenSource coverCts = new();
     private readonly SemaphoreSlim visibleCoverGate = new(2, 2);
+    private readonly HashSet<string> mergeSelection = new(StringComparer.OrdinalIgnoreCase);
     private bool fileOperationRunning;
     private bool categoryFilterLoading;
     private int filterVersion;
     private bool viewerOpen;
     private bool reloadAfterViewer;
     private LibraryViewState? pendingViewRestore;
+    private string mergeModelKey = "";
 
     public LibraryPage()
     {
@@ -180,6 +194,7 @@ public partial class LibraryPage : Page
         categoryFilterLoading = false;
         models.Clear();
         var localFiles = catalogSnapshot
+            .Where(x => !SetMergeService.IsMergedHistory(x))
             .Where(x => selectedCategory.Equals("全部分类", StringComparison.OrdinalIgnoreCase) ||
                         x.Category.Equals(
                             selectedCategory,
@@ -310,6 +325,7 @@ public partial class LibraryPage : Page
             [' ', '\t', ',', '，', ';', '；', '|'],
             StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var values = catalogSnapshot
+            .Where(x => !SetMergeService.IsMergedHistory(x))
             .Where(x => x.Category.Equals(
                 model.Category,
                 StringComparison.OrdinalIgnoreCase))
@@ -319,7 +335,8 @@ public partial class LibraryPage : Page
             {
                 Item = x,
                 Score = state.Favorites.GetScore(x),
-                TagsLabel = string.Join(" · ", state.Favorites.GetTags(x).Take(3))
+                TagsLabel = string.Join(" · ", state.Favorites.GetTags(x).Take(3)),
+                IsMergeSelected = mergeSelection.Contains(MergeKey(x))
             });
         if (FavoriteOnly.IsChecked == true)
             values = values.Where(x => x.Score > 0);
@@ -497,6 +514,13 @@ public partial class LibraryPage : Page
 
     private void ModelList_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        var selectedKey = (ModelList.SelectedItem as ModelLibraryRow)?.Key ?? "";
+        if (!selectedKey.Equals(mergeModelKey, StringComparison.OrdinalIgnoreCase))
+        {
+            mergeSelection.Clear();
+            mergeModelKey = selectedKey;
+            UpdateMergeButton();
+        }
         RefreshCards();
     }
 
@@ -677,10 +701,80 @@ public partial class LibraryPage : Page
         if (!succeeded) return;
     }
 
+    private void MergeSelection_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox { DataContext: SetCardRow card } checkBox) return;
+        var key = MergeKey(card.Item);
+        if (checkBox.IsChecked == true)
+            mergeSelection.Add(key);
+        else
+            mergeSelection.Remove(key);
+        UpdateMergeButton();
+        e.Handled = true;
+    }
+
+    private void UpdateMergeButton()
+    {
+        if (MergeSelectedButton == null) return;
+        MergeSelectedButton.Content = mergeSelection.Count == 0
+            ? "合并"
+            : $"合并 ({mergeSelection.Count})";
+        MergeSelectedButton.IsEnabled = mergeSelection.Count >= 2 && !fileOperationRunning;
+    }
+
+    private async void MergeSelected_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (!await CanEditFilesAsync()) return;
+        var selected = catalogSnapshot
+            .Where(item => mergeSelection.Contains(MergeKey(item)))
+            .ToArray();
+        if (selected.Length < 2)
+        {
+            await ShowInfoAsync("请选择套图", "请在同一人物下至少勾选两套写真。");
+            return;
+        }
+
+        var dialog = new MergeSetsWindow(selected) { Owner = Window.GetWindow(this) };
+        if (dialog.ShowDialog() != true) return;
+
+        fileOperationRunning = true;
+        FileOperationText.Text = "正在合并套图";
+        FileOperationIndicator.Visibility = Visibility.Visible;
+        SetCards.IsEnabled = false;
+        ModelList.IsEnabled = false;
+        UpdateMergeButton();
+        try
+        {
+            var result = await Task.Run(() => SetMergeService.Merge(
+                state,
+                dialog.OrderedItems,
+                dialog.ResultTitle));
+            mergeSelection.Clear();
+            state.WriteLog($"合并后的合集可在媒体库中查看: {result.Merged.Title}");
+            LoadLibrary();
+        }
+        catch (Exception ex)
+        {
+            state.WriteLog("套图合并失败: " + ex.Message);
+            await ShowInfoAsync("合并失败", ErrorText.Format(ex));
+        }
+        finally
+        {
+            fileOperationRunning = false;
+            FileOperationIndicator.Visibility = Visibility.Collapsed;
+            SetCards.IsEnabled = true;
+            ModelList.IsEnabled = true;
+            UpdateMergeButton();
+        }
+    }
+
     private static LocalStat? MenuItemSet(object sender)
     {
         return sender is MenuItem { DataContext: LocalStat item } ? item : null;
     }
+
+    private static string MergeKey(LocalStat item) =>
+        string.IsNullOrWhiteSpace(item.SetId) ? NormalizePath(item.LocalDir) : item.SetId;
 
     private async Task<bool> CanEditFilesAsync()
     {

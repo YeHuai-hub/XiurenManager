@@ -938,6 +938,18 @@ internal sealed class LocalStat
     public string LastVerified { get; set; } = "";
     public string LastComplete { get; set; } = "";
     public string MissingSince { get; set; } = "";
+    public List<MergedPartInfo> MergedParts { get; set; } = [];
+}
+
+internal sealed class MergedPartInfo
+{
+    public string SourceSetId { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string RelativeDirectory { get; set; } = "";
+    public string SourceUrl { get; set; } = "";
+    public string PanUrl { get; set; } = "";
+    public string PanPassword { get; set; } = "";
+    public string ExtractPassword { get; set; } = "";
 }
 
 internal static class CatalogStatuses

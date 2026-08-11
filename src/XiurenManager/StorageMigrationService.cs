@@ -542,6 +542,7 @@ internal sealed class StorageMigrationService : IDisposable
             .Select(group => group.Key)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var groups = state.Database.LocalFiles
+            .Where(x => CatalogStatuses.CanAttemptOpen(x.Availability))
             .Where(x => Directory.Exists(x.LocalDir))
             .GroupBy(x => x.Model, StringComparer.OrdinalIgnoreCase);
         var result = new List<ModelStorage>();
