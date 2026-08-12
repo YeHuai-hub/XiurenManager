@@ -39,6 +39,7 @@ public partial class MergeSetsWindow : FluentWindow
         PartList.ItemsSource = parts;
         PartList.SelectedIndex = 0;
         TitleEditor.Text = SetMergeService.SuggestTitle(ordered);
+        App.State.WriteLog($"打开合并窗口: {parts.Count} 套");
     }
 
     private void MoveUp_OnClick(object sender, RoutedEventArgs e) => MoveSelected(-1);

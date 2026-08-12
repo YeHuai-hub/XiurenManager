@@ -54,7 +54,7 @@
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="{Binding OrderLabel}"
-                                       Foreground="{StaticResource AccentTextBrush}"
+                                       Foreground="{StaticResource AccentTealBrush}"
                                        FontWeight="SemiBold"
                                        VerticalAlignment="Center" />
                             <StackPanel Grid.Column="1">

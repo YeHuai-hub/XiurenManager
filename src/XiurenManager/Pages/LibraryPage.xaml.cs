@@ -764,8 +764,18 @@ public partial class LibraryPage : Page
             return;
         }
 
-        var dialog = new MergeSetsWindow(selected) { Owner = Window.GetWindow(this) };
-        if (dialog.ShowDialog() != true) return;
+        MergeSetsWindow dialog;
+        try
+        {
+            dialog = new MergeSetsWindow(selected) { Owner = Window.GetWindow(this) };
+            if (dialog.ShowDialog() != true) return;
+        }
+        catch (Exception ex)
+        {
+            state.WriteLog("打开合并窗口失败: " + ex);
+            await ShowInfoAsync("无法打开合并窗口", ErrorText.Format(ex));
+            return;
+        }
 
         fileOperationRunning = true;
         FileOperationText.Text = "正在合并套图";

@@ -24,9 +24,17 @@ using System.Runtime.InteropServices;
 public static class XiurenTestMouse {
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
+    [DllImport("user32.dll")] public static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extraInfo);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     public static void Click() {
         mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
         mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
+    }
+    public static void CloseActiveWindow() {
+        keybd_event(0x12, 0, 0, UIntPtr.Zero);
+        keybd_event(0x73, 0, 0, UIntPtr.Zero);
+        keybd_event(0x73, 0, 2, UIntPtr.Zero);
+        keybd_event(0x12, 0, 2, UIntPtr.Zero);
     }
 }
 "@
@@ -166,6 +174,20 @@ try {
     $mergeButton = Wait-Element $mainWindow ($mergeName + " (2)")
     $twoCardsSelected = $mergeButton.Current.IsEnabled
 
+    Click-Element $mergeButton
+    $deadline = (Get-Date).AddSeconds(10)
+    do {
+        Start-Sleep -Milliseconds 200
+        $mergeWindowHandle = [XiurenTestMouse]::GetForegroundWindow()
+    } while ($mergeWindowHandle -eq [IntPtr]$process.MainWindowHandle -and
+             (Get-Date) -lt $deadline)
+    $mergeWindowOpened = $mergeWindowHandle -ne [IntPtr]::Zero -and
+                         $mergeWindowHandle -ne [IntPtr]$process.MainWindowHandle
+    if ($mergeWindowOpened) {
+        [XiurenTestMouse]::CloseActiveWindow()
+        Start-Sleep -Milliseconds 500
+    }
+
     Click-Element (Wait-Element $mainWindow "Test Set 3") -Double
     $deadline = (Get-Date).AddSeconds(10)
     do {
@@ -179,11 +201,13 @@ try {
     [ordered]@{
         SingleClickStayedInLibrary = $singleClickStayedInLibrary
         TwoCardsSelected = $twoCardsSelected
+        MergeWindowOpened = $mergeWindowOpened
         DoubleClickOpenedViewer = $doubleClickOpenedViewer
         TestRoot = $base
     } | ConvertTo-Json
 
-    if (!$singleClickStayedInLibrary -or !$twoCardsSelected -or !$doubleClickOpenedViewer) {
+    if (!$singleClickStayedInLibrary -or !$twoCardsSelected -or
+        !$mergeWindowOpened -or !$doubleClickOpenedViewer) {
         throw "Library card interaction test failed."
     }
 }
