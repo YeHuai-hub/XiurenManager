@@ -182,6 +182,7 @@
                                           Margin="0,0,14,14">
                                         <Button Style="{StaticResource MediaCardButtonStyle}"
                                                 Tag="{Binding Item}"
+                                                AutomationProperties.Name="{Binding Title}"
                                                 Loaded="SetCard_OnLoaded"
                                                 Unloaded="SetCard_OnUnloaded"
                                                 Click="SetCard_OnClick">

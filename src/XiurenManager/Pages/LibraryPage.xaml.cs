@@ -1,9 +1,11 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using Microsoft.Win32;
 using Microsoft.VisualBasic.FileIO;
@@ -134,6 +136,8 @@ public partial class LibraryPage : Page
     private bool reloadAfterViewer;
     private LibraryViewState? pendingViewRestore;
     private string mergeModelKey = "";
+    private string lastClickedCardKey = "";
+    private long lastCardClickTimestamp;
 
     public LibraryPage()
     {
@@ -559,7 +563,33 @@ public partial class LibraryPage : Page
 
     private async void SetCard_OnClick(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button { Tag: LocalStat item }) return;
+        if (sender is not Button { Tag: LocalStat item, DataContext: SetCardRow card } ||
+            item.Availability.Equals(CatalogStatuses.Deleted, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var key = MergeKey(item);
+        var timestamp = Environment.TickCount64;
+        var isDoubleClick = lastClickedCardKey.Equals(key, StringComparison.OrdinalIgnoreCase) &&
+                            timestamp - lastCardClickTimestamp <= GetDoubleClickTime();
+        lastClickedCardKey = isDoubleClick ? "" : key;
+        lastCardClickTimestamp = isDoubleClick ? 0 : timestamp;
+
+        if (isDoubleClick)
+        {
+            await OpenSetViewerAsync(item);
+            return;
+        }
+
+        card.IsMergeSelected = true;
+        mergeSelection.Add(key);
+        UpdateMergeButton();
+    }
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDoubleClickTime();
+
+    private async Task OpenSetViewerAsync(LocalStat item)
+    {
         if (item.Availability.Equals(CatalogStatuses.Deleted, StringComparison.OrdinalIgnoreCase))
         {
             await ShowInfoAsync(
