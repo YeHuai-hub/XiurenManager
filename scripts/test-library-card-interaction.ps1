@@ -53,6 +53,13 @@ function Wait-Element($Root, [string]$Name, [int]$TimeoutSeconds = 20) {
     throw "Timed out waiting for UI element: $Name"
 }
 
+function Find-Element($Root, [string]$Name) {
+    $condition = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::NameProperty,
+        $Name)
+    return $Root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+}
+
 function Click-Element($Element, [switch]$Double) {
     $rect = $Element.Current.BoundingRectangle
     if ($rect.Width -le 0 -or $rect.Height -le 0) {
@@ -140,9 +147,16 @@ try {
     $mainWindow = [System.Windows.Automation.AutomationElement]::FromHandle(
         [IntPtr]$process.MainWindowHandle)
     if ($null -eq $mainWindow) { throw "The test application main window was not found." }
-    Activate-Element (Wait-Element $mainWindow $libraryName)
+    $libraryItem = Wait-Element $mainWindow $libraryName
+    $deadline = (Get-Date).AddSeconds(30)
+    $first = $null
+    do {
+        Activate-Element $libraryItem
+        Start-Sleep -Milliseconds 500
+        $first = Find-Element $mainWindow "Test Set 1"
+    } while ($null -eq $first -and (Get-Date) -lt $deadline)
+    if ($null -eq $first) { throw "The media library did not finish loading test cards." }
 
-    $first = Wait-Element $mainWindow "Test Set 1"
     Click-Element $first
     Start-Sleep -Milliseconds 500
     $singleClickStayedInLibrary = @(Get-ProcessWindows $process.Id).Count -eq 1
